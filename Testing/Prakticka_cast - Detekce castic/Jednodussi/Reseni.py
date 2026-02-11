@@ -5,7 +5,7 @@ import numpy as np
 # klasifikuje částice podle velikosti (percentily) a vygeneruje statistiku
 
 def zpracovani(vstupni_cesta):
-    print(f"--- Načítám originál: {vstupni_cesta} ---")
+    print(f"--- Načítám vstup: {vstupni_cesta} ---")
 
     # Načtení vstupního obrazu
     img_original = cv2.imread(vstupni_cesta)
