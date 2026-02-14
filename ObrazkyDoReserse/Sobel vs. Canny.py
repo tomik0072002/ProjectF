@@ -42,17 +42,17 @@ canny = cv2.Canny(img_blurred, 100, 200)
 plt.figure(figsize=(15, 5))
 
 plt.subplot(1, 3, 1)
-plt.title("Vstup (High-Res)")
+plt.title("Vstup", fontsize=24)
 plt.imshow(img_noisy, cmap='gray')
 plt.axis('off')
 
 plt.subplot(1, 3, 2)
-plt.title("Sobelův operátor")
+plt.title("Sobelův operátor", fontsize=24)
 plt.imshow(sobel_combined, cmap='gray')
 plt.axis('off')
 
 plt.subplot(1, 3, 3)
-plt.title("Cannyho detektor")
+plt.title("Cannyho detektor", fontsize=24)
 plt.imshow(canny, cmap='gray')
 plt.axis('off')
 
