@@ -2,90 +2,119 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Rectangle
 
-# 1. Nastavení dat
-# Vytvoříme jednoduchou vstupní matici (např. hrana: vlevo 10, vpravo 50)
+# 1. NASTAVENÍ DAT
+# Vstupní matice (Input) - Svislá hrana mezi 3. a 4. sloupcem
 input_grid = np.array([
     [10, 10, 10, 50, 50, 50],
     [10, 10, 10, 50, 50, 50],
-    [10, 10, 10, 50, 50, 50],  # <-- Tady proběhne výpočet
+    [10, 10, 10, 50, 50, 50],  # <-- Tady probíhá naše ukázka
     [10, 10, 10, 50, 50, 50],
     [10, 10, 10, 50, 50, 50],
     [10, 10, 10, 50, 50, 50]
 ])
 
-# Kernel (Jádro) - Detekce svislé hrany (Sobel-ish)
+# Kernel (Jádro) - Detekce svislé hrany (Sobel)
 kernel = np.array([
     [-1, 0, 1],
     [-2, 0, 2],
     [-1, 0, 1]
 ])
 
-# Pozice "okna", které chceme vizualizovat (střed okna)
-row, col = 2, 2  # Indexy ve vstupní matici (0-based), takže 3. řádek, 3. sloupec
+# Pozice "okna" pro vizualizaci (střed)
+row, col = 2, 2
 
-# 2. Výpočet jednoho pixelu (konvoluce)
-# Vyřízneme oblast 3x3 z Inputu
-sub_matrix = input_grid[row - 1:row + 2, col - 1:col + 2]
-# Element-wise násobení a suma
-calculation = np.sum(sub_matrix * kernel)
-
-# Vytvoříme prázdnou výstupní matici (jen pro vizualizaci)
+# 2. VÝPOČET CELÉ KONVOLUCE (Feature Map)
+# Abychom ukázali, že to funguje všude, vypočítáme to pro celou matici
 output_grid = np.zeros_like(input_grid)
-output_grid[row, col] = calculation
+pad = 1  # Kernel je 3x3, takže okraj je 1 pixel
+rows, cols = input_grid.shape
+
+for i in range(pad, rows - pad):
+    for j in range(pad, cols - pad):
+        # Výřez 3x3
+        region = input_grid[i - pad:i + pad + 1, j - pad:j + pad + 1]
+        # Součet součinů
+        output_grid[i, j] = np.sum(region * kernel)
+
+# Pro vizualizaci konkrétního výpočtu si uložíme data z našeho zvoleného bodu
+sub_matrix = input_grid[row - 1:row + 2, col - 1:col + 2]
+calculation_result = output_grid[row, col]
 
 
-# 3. Funkce pro vykreslení mřížky s čísly
-def draw_grid(ax, data, title, highlight_coords=None, highlight_color='red', cell_format="{:.0f}"):
-    ax.imshow(data, cmap='Blues', vmin=0, vmax=np.max(data) if np.max(data) > 0 else 1)
+# 3. VYKRESLOVACÍ FUNKCE
+def draw_grid(ax, data, title, highlight_coords=None, highlight_color='red', cell_format="{:.0f}", cmap='Blues'):
+    # Zobrazíme matici
+    ax.imshow(data, cmap=cmap, vmin=0, vmax=np.max(data) if np.max(data) > 0 else 1)
 
     # Mřížka
-    rows, cols = data.shape
-    ax.set_xticks(np.arange(cols) - 0.5)
-    ax.set_yticks(np.arange(rows) - 0.5)
+    r, c = data.shape
+    ax.set_xticks(np.arange(c) - 0.5)
+    ax.set_yticks(np.arange(r) - 0.5)
     ax.grid(which="major", color="black", linestyle='-', linewidth=1)
     ax.tick_params(which="major", bottom=False, left=False, labelbottom=False, labelleft=False)
-    ax.set_title(title, fontsize=16, fontweight='bold', pad=15)
+    ax.set_title(title, fontsize=18, fontweight='bold', pad=15)
 
-    # Vepsání čísel do buněk
-    for i in range(rows):
-        for j in range(cols):
+    # Čísla v buňkách
+    for i in range(r):
+        for j in range(c):
             val = data[i, j]
-            color = "white" if val > np.max(data) / 2 else "black"
-            ax.text(j, i, cell_format.format(val), ha="center", va="center", color=color, fontsize=14,
-                    fontweight='bold')
+            # Barva textu podle pozadí (aby byla čitelná)
+            text_color = "white" if np.abs(val) > np.max(np.abs(data)) / 2 else "black"
+            # Pokud je hodnota 0 a není to kernel, zobrazíme ji šedě (méně nápadně)
+            if val == 0 and title != "2. Kernel (Filtrační maska)":
+                text_color = "gray"
 
-    # Zvýraznění (červený rámeček)
+            ax.text(j, i, cell_format.format(val), ha="center", va="center",
+                    color=text_color, fontsize=14, fontweight='bold')
+
+    # Červený rámeček (zvýraznění)
     if highlight_coords:
-        r, c, h, w = highlight_coords
-        rect = Rectangle((c - 0.5, r - 0.5), w, h, fill=False, edgecolor=highlight_color, linewidth=4)
+        hr, hc, hh, hw = highlight_coords
+        rect = Rectangle((hc - 0.5, hr - 0.5), hw, hh, fill=False, edgecolor=highlight_color, linewidth=4)
         ax.add_patch(rect)
 
 
-# 4. Vykreslení celého schématu
-fig, axs = plt.subplots(1, 3, figsize=(18, 6))
+# 4. PLOTOVÁNÍ
+fig, axs = plt.subplots(1, 3, figsize=(20, 8))  # Širší a vyšší plátno
 
-# Panel 1: Vstupní matice (Input)
+# Panel 1: Input
 draw_grid(axs[0], input_grid, "1. Vstupní obraz (Input)",
-          highlight_coords=(row - 1, col - 1, 3, 3))  # Zvýrazníme 3x3 okolí
+          highlight_coords=(row - 1, col - 1, 3, 3))
 
 # Panel 2: Kernel
 draw_grid(axs[1], kernel, "2. Kernel (Filtrační maska)",
-          highlight_coords=(0, 0, 3, 3), highlight_color='red')  # Celý kernel je aktivní
+          highlight_coords=(0, 0, 3, 3), highlight_color='red', cmap='Oranges')
 
-# Panel 3: Výstup (Output)
-# Zobrazíme jen nuly, ale s tím jedním vypočítaným číslem
-# Zvýrazníme jen ten jeden pixel
+# Panel 3: Output
+# Zvýrazníme jeden pixel, ale vidět budou i ostatní vypočítané hodnoty!
 draw_grid(axs[2], output_grid, "3. Výsledek (Feature Map)",
           highlight_coords=(row, col, 1, 1))
 
-# 5. Přidání vysvětlujícího textu (Rovnice) pod obrázek
-calculation_text = (
-    f"Princip výpočtu pro zvýrazněný pixel:\n"
-    f"Součet součinů (Input * Kernel) = \n"
-    f"({sub_matrix[0, 0]}*{kernel[0, 0]}) + ({sub_matrix[0, 1]}*{kernel[0, 1]}) + ... + ({sub_matrix[2, 2]}*{kernel[2, 2]}) = {calculation}"
-)
-fig.text(0.5, 0.05, calculation_text, ha='center', fontsize=14, bbox=dict(facecolor='white', alpha=0.5))
+# 5. DETAILNÍ VÝPOČET (Textové pole dole)
+# Rozepíšeme to po sloupcích, aby to bylo jasné
+col1_calc = f"({sub_matrix[0, 0]}×{kernel[0, 0]}) + ({sub_matrix[1, 0]}×{kernel[1, 0]}) + ({sub_matrix[2, 0]}×{kernel[2, 0]})"
+col2_calc = f"({sub_matrix[0, 1]}×{kernel[0, 1]}) + ({sub_matrix[1, 1]}×{kernel[1, 1]}) + ({sub_matrix[2, 1]}×{kernel[2, 1]})"
+col3_calc = f"({sub_matrix[0, 2]}×{kernel[0, 2]}) + ({sub_matrix[1, 2]}×{kernel[1, 2]}) + ({sub_matrix[2, 2]}×{kernel[2, 2]})"
 
-plt.tight_layout(rect=[0, 0.1, 1, 1])  # Necháme místo dole pro text
-plt.savefig("schema_konvoluce.png", dpi=300)
+col1_res = np.sum(sub_matrix[:, 0] * kernel[:, 0])  # -40
+col2_res = np.sum(sub_matrix[:, 1] * kernel[:, 1])  # 0
+col3_res = np.sum(sub_matrix[:, 2] * kernel[:, 2])  # 200
+
+# Sestavení textu
+calculation_text = (
+    f"Detailní výpočet pro zvýrazněný pixel (konvoluce):\n"
+    f"1. Sloupec: {col1_calc} = {col1_res}\n"
+    f"2. Sloupec: {col2_calc} =   {col2_res}\n"
+    f"3. Sloupec: {col3_calc} =  {col3_res}\n"
+    f"----------------------------------------------------------------------\n"
+    f"Celkový součet: {col1_res} + {col2_res} + {col3_res} = {calculation_result}"
+)
+
+# Vložení textu do rámečku
+fig.text(0.5, 0.02, calculation_text, ha='center', va='bottom', fontsize=16,
+         family='monospace',  # Monospace písmo zarovná čísla pod sebe
+         bbox=dict(boxstyle='round', facecolor='#f0f0f0', alpha=1, pad=0.8))
+
+plt.subplots_adjust(bottom=0.3)  # Uděláme místo dole pro text
+plt.savefig("schema_konvoluce_vylepsene.png", dpi=300)
 plt.show()
