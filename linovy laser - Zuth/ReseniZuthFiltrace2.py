@@ -4,41 +4,46 @@ import matplotlib.pyplot as plt
 import os
 import cv2
 
-# --- NASTAVENÍ ---
+# --- NASTAVENÍ SOUBORU ---
 outAdr = './OUT/'
-N = '251'  # Změň na 'b251' dle potřeby
+N = '251'  # Aplikujeme na pohled shora
 input_file = os.path.join(outAdr, f'kamera_{N}.npy')
 
-# --- DETEKCE ---
+# --- 1. DETEKCE ---
 LASER_AXIS = 0
 THRESHOLD_VALUE = 25
 PEAK_WINDOW = 10
 
-# --- PŘED-ZPRACOVÁNÍ (Vstupní signál) ---
+# --- 2. PŘED-ZPRACOVÁNÍ ---
 ENABLE_GAUSSIAN_BLUR = True
 GAUSSIAN_KSIZE = (5, 5)
 
-# --- POKROČILÁ FILTRACE (Výsledný obraz) ---
-# 1. Ořezání pozadí (Podle osy Z - viz legenda vpravo na grafu)
-# Nastav tyto hodnoty podle toho, co ukazuje tvůj graf.
-# Vše pod MIN a nad MAX bude smazáno (černá).
+# --- 3. AGRESIVNÍ FILTRACE (ZDE JSOU ZMĚNY) ---
+
+# A) OŘEZ PODLE ČASU (Osa X)
+# Podle tvého grafu bordel končí na snímku 90.
+CROP_START_INDEX = 90  # <--- TOTO SMAŽE TEN PRUH VLEVO
+CROP_END_INDEX = 10  # Pro jistotu ořízneme i kousek konce
+
+# B) OŘEZ PODLE VÝŠKY (Osa Z / Barva)
+# Podle legendy je paleta žlutá (>200), podlaha fialová (<100).
 ENABLE_Z_CROP = True
-MIN_Z_THRESHOLD = 50  # Odstraní podlahu/šum s nízkou hodnotou (např. fialové oblasti)
-MAX_Z_THRESHOLD = 400  # Odstraní odlesky/strop s vysokou hodnotou
+MIN_Z_THRESHOLD = 120  # <--- ZVÝŠENO Z 50 NA 120 (Odstraní podlahu mezi prkny)
+MAX_Z_THRESHOLD = 400
 
-# 2. Morfologické uzavření (Zacelí díry v paletě)
+# C) Morfologie a vyhlazení
 ENABLE_MORPHOLOGY = True
-MORPH_KERNEL_SIZE = 5  # Velikost "záplaty" na díry (čím větší, tím větší díry zalepí)
+MORPH_KERNEL_SIZE = 5
 
-# 3. Bilaterální filtr (Hladké plochy, ostré hrany)
-# Nahrazuje prostý Medián, je výpočetně náročnější, ale hezčí.
 ENABLE_BILATERAL = True
-BILATERAL_SIGMA_COLOR = 75  # Jak moc se liší barvy, aby se ještě průměrovaly
-BILATERAL_SIGMA_SPACE = 75  # Jak daleko od sebe pixely ovlivňují výsledek
+BILATERAL_SIGMA_COLOR = 75
+BILATERAL_SIGMA_SPACE = 75
+
+# D) Blob Filter (teď už bude fungovat, protože jsme přerušili spojení)
+ENABLE_BLOB_FILTER = True
 
 
 def get_laser_center_subpixel(img_slice):
-    # (Stejná funkce jako minule)
     img_slice = img_slice.astype(float)
     max_idx = int(np.argmax(img_slice))
     max_val = img_slice[max_idx]
@@ -57,6 +62,26 @@ def get_laser_center_subpixel(img_slice):
     return np.sum(window_idxs * window_vals) / total
 
 
+def keep_largest_blob(img_data):
+    """
+    Ponechá pouze největší souvislý objekt v obraze.
+    """
+    mask = (img_data > 0).astype(np.uint8)
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
+
+    if num_labels < 2:
+        return img_data
+
+    # stats: [x, y, width, height, area]
+    largest_label = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+
+    final_mask = (labels == largest_label)
+    img_data[~final_mask] = 0
+
+    print(f"  -> Blob Filter: Ponechán objekt {largest_label} (plocha {stats[largest_label, cv2.CC_STAT_AREA]} px)")
+    return img_data
+
+
 def main():
     print(f"--- START: {N} ---")
 
@@ -70,7 +95,6 @@ def main():
 
     depth_map = []
 
-    # 1. Výpočet profilů
     for i in range(n_snimku):
         img = snimky_3d_loaded[i]
 
@@ -93,39 +117,41 @@ def main():
                 profile.append(get_laser_center_subpixel(laser_signal[:, x]))
 
         depth_map.append(profile)
-
         if i % 100 == 0: print(f"Zpracováno {i}/{n_snimku}...")
 
     scan_result = np.array(depth_map).T
-    print("Základní výpočet hotov. Aplikuji pokročilé filtry...")
+    print("Výpočet hotov. Aplikuji finální filtry...")
 
     # --- POST-PROCESSING ---
-
-    # Práce s daty (převedeme na float32 pro filtry OpenCV)
     viz_data = np.nan_to_num(scan_result).astype(np.float32)
 
-    # KROK A: Ořezání pozadí (Thresholding)
+    # 1. ČASOVÝ OŘEZ (Nejspolehlivější metoda na ten pruh vlevo)
+    if CROP_START_INDEX > 0:
+        viz_data[:, :CROP_START_INDEX] = 0
+        print(f"  -> Oříznuto prvních {CROP_START_INDEX} snímků.")
+
+    if CROP_END_INDEX > 0:
+        viz_data[:, -CROP_END_INDEX:] = 0
+
+    # 2. VÝŠKOVÝ OŘEZ (Odstraní podlahu)
     if ENABLE_Z_CROP:
-        # Vytvoříme masku: kde je hodnota mimo limity, nastavíme 0
         maska_pozadi = (viz_data < MIN_Z_THRESHOLD) | (viz_data > MAX_Z_THRESHOLD)
         viz_data[maska_pozadi] = 0
-        print(f"Ořezáno Z mimo rozsah {MIN_Z_THRESHOLD}-{MAX_Z_THRESHOLD}")
+        print(f"  -> Oříznuta výška Z pod {MIN_Z_THRESHOLD} a nad {MAX_Z_THRESHOLD}")
 
-    # KROK B: Morfologické uzavření (vyplnění děr)
+    # 3. Morfologie (Zacelení)
     if ENABLE_MORPHOLOGY:
         kernel = np.ones((MORPH_KERNEL_SIZE, MORPH_KERNEL_SIZE), np.uint8)
-        # Closing = Dilatace následovaná Erozí
         viz_data = cv2.morphologyEx(viz_data, cv2.MORPH_CLOSE, kernel)
-        print("Morfologické uzavření aplikováno.")
 
-    # KROK C: Bilaterální filtr (nebo Medián)
+    # 4. Blob Filter (Teď už vyčistí jen zbytky)
+    if ENABLE_BLOB_FILTER:
+        print("  -> Hledám největší objekt...")
+        viz_data = keep_largest_blob(viz_data)
+
+    # 5. Vyhlazení
     if ENABLE_BILATERAL:
-        # Bilaterální filtr vyžaduje 32bit float
         viz_data = cv2.bilateralFilter(viz_data, 9, BILATERAL_SIGMA_COLOR, BILATERAL_SIGMA_SPACE)
-        print("Bilaterální filtr aplikován.")
-    else:
-        # Fallback na Medián, pokud by Bilateral nefungoval dobře
-        viz_data = cv2.medianBlur(viz_data, 5)
 
     # --- VIZUALIZACE ---
     fig_width = 16
@@ -139,12 +165,10 @@ def main():
 
     plt.figure(figsize=(fig_width, fig_height))
 
-    # Pokud jsme ořezali data na 0, chceme, aby 0 byla černá (nebo průhledná)
-    # cmap='magma' má černou dole, což je fajn.
     img_plot = plt.imshow(viz_data, cmap='magma', interpolation='nearest', aspect='auto', origin='lower')
 
-    plt.title(f"High-Quality Sken: {N}", fontsize=16)
-    plt.ylabel("Pozice na senzoru [px]", fontsize=12)
+    plt.title(f"Final Clean Sken: {N}", fontsize=16)
+    plt.ylabel("Pozice [px]", fontsize=12)
     plt.xlabel("Číslo snímku", fontsize=12)
 
     cbar = plt.colorbar(img_plot)
@@ -152,7 +176,7 @@ def main():
 
     plt.tight_layout()
 
-    filename = f"sken_HQ_{N}.png"
+    filename = f"sken_FINAL_{N}.png"
     plt.savefig(filename, dpi=300, bbox_inches='tight')
     print(f"Uloženo: {filename}")
     plt.show()

@@ -22,7 +22,6 @@ def get_laser_center_subpixel(img_slice):
     img_slice = img_slice.astype(float)
     max_idx = int(np.argmax(img_slice))
     max_val = img_slice[max_idx]
-
     # Pokud je signál příliš slabý, vrátíme NaN (nedefinováno)
     if max_val < THRESHOLD_VALUE:
         return np.nan
