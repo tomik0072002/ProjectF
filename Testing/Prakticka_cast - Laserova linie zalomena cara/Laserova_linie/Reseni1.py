@@ -90,7 +90,7 @@ def main():
     img_plot = plt.imshow(viz_data, cmap='magma', interpolation='nearest', aspect='auto', origin='lower')
 
     # Titulky a popisky os
-    plt.title("Laserova_linie", fontsize=16)
+    plt.title("Laserová linie", fontsize=16)
     plt.ylabel("Šířka [px]", fontsize=12)
     plt.xlabel("Délka [px]", fontsize=12)
 
