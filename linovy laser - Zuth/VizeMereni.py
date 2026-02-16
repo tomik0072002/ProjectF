@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 
 
 outAdr='./OUT/'
-N='251'
+N='b351'
 do=1000
 od=0
 snimky_3d_loaded = np.load(outAdr+f'kamera_{N}.npy')
