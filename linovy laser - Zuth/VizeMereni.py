@@ -22,6 +22,8 @@ nSnimku=len(snimky_loaded)
 
 # ... (načítání dat zůstává stejné) ...
 
+# ... (načítání dat zůstává stejné) ...
+
 maxJas = 0
 plt.figure(1)
 jasy = []
