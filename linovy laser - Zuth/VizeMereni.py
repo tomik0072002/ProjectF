@@ -13,16 +13,12 @@ import matplotlib.pyplot as plt
 
 
 outAdr='./OUT/'
-N='b351'
+N='251'
 do=1000
 od=0
 snimky_3d_loaded = np.load(outAdr+f'kamera_{N}.npy')
 snimky_loaded = [arr for arr in snimky_3d_loaded]
 nSnimku=len(snimky_loaded)
-
-# ... (načítání dat zůstává stejné) ...
-
-# ... (načítání dat zůstává stejné) ...
 
 maxJas = 0
 plt.figure(1)
