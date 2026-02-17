@@ -32,7 +32,7 @@ def zpracuj_vsechny_obrazky():
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
         # Identifikace panelů
-        thresh_value = 130
+        thresh_value = 122
         _, panels_binary = cv2.threshold(gray, thresh_value, 255, cv2.THRESH_BINARY_INV)
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
         panels_binary = cv2.morphologyEx(panels_binary, cv2.MORPH_OPEN, kernel)
