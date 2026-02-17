@@ -87,7 +87,7 @@ def zpracuj_vsechny_obrazky():
         nazev_souboru = os.path.basename(cesta_k_obrazku)
         cesta_ulozeni = os.path.join(vystupni_slozka, "vysledek_" + nazev_souboru)
         cv2.imwrite(cesta_ulozeni, output)
-        print(f" Vysledky uloženy: {cesta_ulozeni} (Hotspotů: {count})")
+        print(f" Výsledky ve složce: {cesta_ulozeni} (Hotspotů: {count})")
 
         # Zobrazení
         nazev_okna = "Porovnani (Dalsi = MEZERNIK, Konec = Q)"
