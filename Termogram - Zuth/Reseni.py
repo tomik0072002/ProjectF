@@ -1,97 +1,121 @@
 import cv2
 import numpy as np
 import os
+import glob
 
 
-def zpracuj_termalni_snimek(cesta_k_obrazku):
-    # Kontrola existence souboru
-    if not os.path.exists(cesta_k_obrazku):
-        print(f"Soubor nenalezen: {cesta_k_obrazku}")
+def zpracuj_vsechny_obrazky():
+    # 1. Příprava složky pro výsledky
+    vystupni_slozka = "vysledky"
+    if not os.path.exists(vystupni_slozka):
+        os.makedirs(vystupni_slozka)
+        print(f"📁 Vytvořena složka pro ukládání: {vystupni_slozka}")
+
+    # 2. Hledání všech obrázků
+    pripory = ["*.jpg", "*.jpeg", "*.png", "*.bmp", "*.tif"]
+    seznam_obrazku = []
+    for p in pripory:
+        seznam_obrazku.extend(glob.glob(p))
+
+    if not seznam_obrazku:
+        print("❌ Žádné obrázky nenalezeny.")
         return
 
-    # Načtení obrázku
-    img = cv2.imread(cesta_k_obrazku)
-    output = img.copy()
+    print(f"🔎 Nalezeno {len(seznam_obrazku)} obrázků. Začínám zpracování...")
 
-    # 1. Převod na odstíny šedi
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    # 3. Hlavní smyčka
+    for cesta_k_obrazku in seznam_obrazku:
+        print(f"➡️ Zpracovávám: {cesta_k_obrazku}")
 
-    # 2. Předzpracování - odstranění šumu
-    # Bilateral filter je lepší než Gaussian, protože zachovává hrany (okraje hotspotu)
-    gray_filtered = cv2.bilateralFilter(gray, 9, 75, 75)
-
-    # 3. Morphological Top-Hat transformace
-    # Tato operace zvýrazní malé světlé objekty na tmavším pozadí (ideální pro hotspoty)
-    # Velikost kernelu (15,15) určuje maximální velikost objektu, který hledáme
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
-    tophat = cv2.morphologyEx(gray_filtered, cv2.MORPH_TOPHAT, kernel)
-
-    # 4. Prahování na výsledku Top-Hat
-    # Nyní nehledáme absolutní jas 190, ale jas "vystupující" nad okolí
-    # Použijeme Otsuho metodu pro automatické nalezení prahu, nebo fixní práh na tophat
-    # Zde volím fixní práh na tophat vrstvu - experimentálně cca 30-50 rozdíl jasu
-    _, thresh = cv2.threshold(tophat, 40, 255, cv2.THRESH_BINARY)
-
-    # 5. Čištění masky (Eroze + Dilatace pro odstranění malých teček šumu)
-    thresh = cv2.erode(thresh, None, iterations=1)
-    thresh = cv2.dilate(thresh, None, iterations=2)
-
-    # 6. Nalezení kontur
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    found_defects = 0
-    print(f"--- Zpracování: {cesta_k_obrazku} ---")
-
-    for contour in contours:
-        area = cv2.contourArea(contour)
-
-        # Filtr 1: Velikost (ignorujeme příliš malé smítka a obrovské plochy)
-        if area < 10 or area > 1000:
+        # Načtení
+        img = cv2.imread(cesta_k_obrazku)
+        if img is None:
             continue
 
-        # Získání ohraničujícího obdélníku
-        x, y, w, h = cv2.boundingRect(contour)
+        output = img.copy()
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-        # Filtr 2: Tvar (Aspect Ratio)
-        # Hotspoty jsou obvykle kulaté nebo čtvercové.
-        # Pokud je poměr stran příliš velký (např. > 4), je to spíše čára/odlesk.
-        aspect_ratio = float(w) / h
-        if aspect_ratio > 3.0 or aspect_ratio < 0.33:
-            continue
+        # --- PŮVODNÍ LOGIKA DETEKCE ---
 
-        # Pokud prošlo filtry, považujeme za poruchu
-        found_defects += 1
+        # Identifikace panelů
+        thresh_value = 110
+        _, panels_binary = cv2.threshold(gray, thresh_value, 255, cv2.THRESH_BINARY_INV)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        panels_binary = cv2.morphologyEx(panels_binary, cv2.MORPH_OPEN, kernel)
 
-        # Vykreslení: Červený obdélník kolem hotspotu
-        cv2.rectangle(output, (x, y), (x + w, y + h), (0, 0, 255), 2)
+        contours, _ = cv2.findContours(panels_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        maska_panelu = np.zeros_like(gray)
 
-        # Volitelně: Vypíšeme max teplotu (jas) uvnitř oblasti
-        roi = gray[y:y + h, x:x + w]
-        min_val, max_val, _, _ = cv2.minMaxLoc(roi)
-        label = f"Hotspot ({max_val})"
-        cv2.putText(output, label, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area < 1000: continue
+            hull = cv2.convexHull(cnt)
+            cv2.drawContours(maska_panelu, [hull], -1, 255, -1)
 
-    print(f"🔍 Nalezeno hotspotů: {found_defects}")
+        maska_panelu = cv2.erode(maska_panelu, kernel, iterations=3)
 
-    # Zobrazení výsledků
-    # Ukážeme Top-Hat (co vidí algoritmus jako 'výstupky') a výsledek
-    cv2.imshow("Top-Hat (Zvyrazneni)", tophat)
-    cv2.imshow("Maska po prahovani", thresh)
-    cv2.imshow("Vysledek detekce", output)
+        # Hledání hotspotů
+        kernel_tophat = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+        tophat = cv2.morphologyEx(gray, cv2.MORPH_TOPHAT, kernel_tophat)
 
-    print("Stiskni libovolnou klávesu pro další obrázek...")
-    cv2.waitKey(0)
+        _, defect_thresh = cv2.threshold(tophat, 50, 255, cv2.THRESH_BINARY)
+        final_defects = cv2.bitwise_and(defect_thresh, defect_thresh, mask=maska_panelu)
 
+        _, absolute_hot_thresh = cv2.threshold(gray, 190, 255, cv2.THRESH_BINARY)
+        absolute_hot_masked = cv2.bitwise_and(absolute_hot_thresh, absolute_hot_thresh, mask=maska_panelu)
 
-cv2.destroyAllWindows()
+        final_combined = cv2.bitwise_or(final_defects, absolute_hot_masked)
+
+        # Vykreslení (Černé čtverečky)
+        contours_defects, _ = cv2.findContours(final_combined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        count = 0
+        for d_cnt in contours_defects:
+            area = cv2.contourArea(d_cnt)
+            if area < 15: continue
+
+            x, y, w, h = cv2.boundingRect(d_cnt)
+            aspect = w / float(h)
+            if aspect > 4 or aspect < 0.25: continue
+
+            count += 1
+            # Černý obdélník
+            cv2.rectangle(output, (x, y), (x + w, y + h), (0, 0, 0), 2)
+
+        # --- ZOBRAZENÍ VEDLE SEBE (NOVÉ) ---
+
+        # Spojíme originál (img) a výsledek (output) vedle sebe
+        # np.hstack vyžaduje, aby měly oba obrázky stejnou výšku (což mají)
+        porovnani = np.hstack((img, output))
+
+        # Volitelné: Přidání popisků přímo do obrazu pro přehlednost
+        cv2.putText(porovnani, "ORIGINAL", (30, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        # Musíme vypočítat pozici pro druhý nápis (šířka jednoho obrázku + odsazení)
+        sirka_obr = img.shape[1]
+        cv2.putText(porovnani, "DETEKCE", (sirka_obr + 30, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+
+        # Uložení (Ukládáme jen výsledek s rámečky, ne to dvojité porovnání)
+        nazev_souboru = os.path.basename(cesta_k_obrazku)
+        cesta_ulozeni = os.path.join(vystupni_slozka, "res_" + nazev_souboru)
+        cv2.imwrite(cesta_ulozeni, output)
+        print(f"   ✅ Uloženo: {cesta_ulozeni} (Hotspotů: {count})")
+
+        # Zobrazení
+        nazev_okna = "Porovnani (Dalsi = MEZERNIK, Konec = Q)"
+        cv2.namedWindow(nazev_okna, cv2.WINDOW_NORMAL)
+        # Nastavíme širší okno, aby se tam vešly oba obrázky vedle sebe
+        cv2.resizeWindow(nazev_okna, 1600, 700)
+
+        cv2.imshow(nazev_okna, porovnani)
+
+        key = cv2.waitKey(0)
+        if key == ord('q') or key == ord('Q'):
+            print("Ukončuji skript...")
+            break
+
+    cv2.destroyAllWindows()
+    print("HOTOVO.")
+
 
 if __name__ == "__main__":
-    seznam_obrazku = [
-        "Obr1.jpg",
-        "Obr2.jpg",
-        "Obr3.jpg",
-        "Obr4.jpg"
-    ]
-
-    for img_path in seznam_obrazku:
-        zpracuj_termalni_snimek(img_path)
+    zpracuj_vsechny_obrazky()
