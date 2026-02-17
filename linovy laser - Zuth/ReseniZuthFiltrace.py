@@ -1,40 +1,36 @@
-# -*- coding: utf-8 -*-
+# Přidána filtrace
 import numpy as np
 import matplotlib.pyplot as plt
 import os
 import cv2
 
-# --- NASTAVENÍ ---
+# Tahání dat
 outAdr = './OUT/'
-N = 'b351'  # ZDE MĚNÍŠ NÁZEV SOUBORU (např. 'b351' nebo 'b251')
+N = 'b351' # Název souboru ("251", "b351")
 input_file = os.path.join(outAdr, f'kamera_{N}.npy')
 
-# --- Parametry detekce a filtrace ---
+# Parametry detekce
 LASER_AXIS = 0  # 0 = Laser je vertikálně, 1 = Laser je horizontálně
 THRESHOLD_VALUE = 25  # Lehce jsem zvýšil práh (původně 20), pomůže odfiltrovat slabý šum
 PEAK_WINDOW = 10  # Poloměr okna pro výpočet těžiště
 
-# NOVÉ: Parametry filtrace
-ENABLE_GAUSSIAN_BLUR = True  # Zapnout rozostření před detekcí (vyhladí vstup)
-GAUSSIAN_KSIZE = (5, 5)  # Velikost jádra pro rozostření (musí být lichá čísla, např. 3x3, 5x5, 7x7)
+# Parametry FILTRACE
+ENABLE_GAUSSIAN_BLUR = True  # Rozostření před detekcí
+GAUSSIAN_KSIZE = (5, 5)  # Velikost (kernelu) jádra pro rozostření
 
-ENABLE_MEDIAN_FILTER = True  # Zapnout mediánový filtr na výsledku (odstraní tečky)
-MEDIAN_KSIZE = 5  # Velikost okna mediánu (musí být liché číslo > 1)
+ENABLE_MEDIAN_FILTER = True  # Mediánový filtr na výsledku
+MEDIAN_KSIZE = 5  # Velikost (kernelu) okna mediánu
 
 
 def get_laser_center_subpixel(img_slice):
-    """
-    Vypočítá přesné centrum laseru (subpixelová přesnost) v jednom řádku/sloupci.
-    """
+
     img_slice = img_slice.astype(float)
     max_idx = int(np.argmax(img_slice))
     max_val = img_slice[max_idx]
 
-    # Pokud je signál příliš slabý, vrátíme NaN (nedefinováno)
     if max_val < THRESHOLD_VALUE:
         return np.nan
 
-    # Určení okna okolo maxima
     start = max(0, max_idx - PEAK_WINDOW)
     end = min(len(img_slice), max_idx + PEAK_WINDOW + 1)
 
@@ -50,10 +46,10 @@ def get_laser_center_subpixel(img_slice):
 
 
 def main():
-    print(f"--- START ---")
+    print(f"START")
     print(f"Hledám soubor: {input_file}")
 
-    # 1. Kontrola a načtení souboru
+    # Kontrola a načtení souboru
     if not os.path.exists(input_file):
         print(f"CHYBA: Soubor {input_file} neexistuje!")
         return
@@ -64,25 +60,23 @@ def main():
 
     depth_map = []
 
-    # 2. Zpracování snímků
+    # Zpracování snímků
     for i in range(n_snimku):
         img = snimky_3d_loaded[i]
 
-        # a) Získání signálu (rozdíl barev nebo jas)
         if img.ndim == 3:
             laser_signal = cv2.subtract(img[:, :, 2], img[:, :, 1])
         else:
             laser_signal = img
 
-        # b) NOVÉ: Předzpracování - Gaussovské rozostření
-        # Vyhladí šum senzoru předtím, než začneme hledat maximum.
+        # Gaussovské rozostření
         if ENABLE_GAUSSIAN_BLUR:
             laser_signal = cv2.GaussianBlur(laser_signal, GAUSSIAN_KSIZE, 0)
 
         h, w = laser_signal.shape
         profile = []
 
-        # c) Detekce profilu
+        # Procházení řezů obrazem
         if LASER_AXIS == 0:
             for y in range(h):
                 profile.append(get_laser_center_subpixel(laser_signal[y, :]))
@@ -92,36 +86,33 @@ def main():
 
         depth_map.append(profile)
 
-        # Výpis průběhu
+        # Výpis průběhu zpracování snímků
         if i % 50 == 0:
             print(f"Zpracováno {i} / {n_snimku}")
 
-    # Převedení na numpy array a transpozice
     scan_result = np.array(depth_map).T
     print("Výpočet profilů hotov.")
 
-    # 3. NOVÉ: Následné zpracování (Post-processing)
-    viz_data = np.nan_to_num(scan_result)  # Převedeme NaN na nuly pro filtraci
+    viz_data = np.nan_to_num(scan_result)
 
+    # Mediánový filtr
     if ENABLE_MEDIAN_FILTER:
-        print("Aplikuji mediánový filtr pro odstranění šumu...")
-        # Mediánový filtr funguje nejlépe na datech typu uint8 nebo float32.
-        # Pro jistotu převedeme data na float32.
+        print("Mediánový filtr pro odstranění šumu...")
+        # Převod typu dat pro lepší funkci
         viz_data_float = viz_data.astype(np.float32)
         viz_data = cv2.medianBlur(viz_data_float, MEDIAN_KSIZE)
         print("Filtrace hotova.")
 
-    # 4. Nastavení vizualizace
+    # Vizualizace
     print("Připravuji graf...")
 
+    # Výchozí rozměry okna pro vizualizaci
     fig_width = 16
     fig_height = 6
 
     if N == 'b351':
-        print(f"Režim zobrazení: Širokoúhlý (pro b351)")
         fig_height = 3
     elif N == 'b251':
-        print(f"Režim zobrazení: Standardní (pro b251)")
         fig_height = 6
 
     plt.figure(figsize=(fig_width, fig_height))
@@ -131,7 +122,7 @@ def main():
 
     plt.title(f"Filtrovaný sken: {N}", fontsize=16)
     plt.ylabel("Pozice na senzoru [px]", fontsize=12)
-    plt.xlabel("Číslo snímku (čas)", fontsize=12)
+    plt.xlabel("Číslo snímku", fontsize=12)
 
     # Přidání colorbaru
     cbar = plt.colorbar(img_plot)

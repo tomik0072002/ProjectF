@@ -1,12 +1,12 @@
-# -*- coding: utf-8 -*-
+# Vycházím ze skriptu pro zpracování laseru ze simulace
 import numpy as np
 import matplotlib.pyplot as plt
 import os
 import cv2
 
-# --- NASTAVENÍ ---
+# Tahání dat
 outAdr = './OUT/'
-N = '251'  # ZDE MĚNÍŠ NÁZEV SOUBORU (např. 'b351' nebo 'b251')
+N = '251'  # Název souboru ("251", "b351")
 input_file = os.path.join(outAdr, f'kamera_{N}.npy')
 
 # Parametry detekce
@@ -16,17 +16,14 @@ PEAK_WINDOW = 10  # Poloměr okna pro výpočet těžiště
 
 
 def get_laser_center_subpixel(img_slice):
-    """
-    Vypočítá přesné centrum laseru (subpixelová přesnost) v jednom řádku/sloupci.
-    """
+
     img_slice = img_slice.astype(float)
     max_idx = int(np.argmax(img_slice))
     max_val = img_slice[max_idx]
-    # Pokud je signál příliš slabý, vrátíme NaN (nedefinováno)
+
     if max_val < THRESHOLD_VALUE:
         return np.nan
 
-    # Určení okna okolo maxima
     start = max(0, max_idx - PEAK_WINDOW)
     end = min(len(img_slice), max_idx + PEAK_WINDOW + 1)
 
@@ -42,13 +39,12 @@ def get_laser_center_subpixel(img_slice):
 
 
 def main():
-    print(f"--- START ---")
+    print(f"START")
     print(f"Hledám soubor: {input_file}")
 
-    # 1. Kontrola a načtení souboru
+    # Kontrola a načtení souboru
     if not os.path.exists(input_file):
         print(f"CHYBA: Soubor {input_file} neexistuje!")
-        print("Ujisti se, že jsi spustil první skript a složka OUT existuje.")
         return
 
     snimky_3d_loaded = np.load(input_file)
@@ -57,17 +53,15 @@ def main():
 
     depth_map = []
 
-    # 2. Zpracování snímků
+    # Zpracování snímků
     for i in range(n_snimku):
         img = snimky_3d_loaded[i]
 
-        # Rozhodnutí zda je vstup barevný (3D) nebo šedotónový (2D)
         if img.ndim == 3:
-            # Předpoklad: Červený laser. Odečteme zelenou složku pro zvýraznění.
-            # (Používáme cv2.subtract pro bezpečné odečtení uint8 bez přetečení)
+
             laser_signal = cv2.subtract(img[:, :, 2], img[:, :, 1])
         else:
-            # Obraz už je jen jasová mapa
+            # Obraz už je jasová mapa !
             laser_signal = img
 
         h, w = laser_signal.shape
@@ -83,44 +77,39 @@ def main():
 
         depth_map.append(profile)
 
-        # Výpis průběhu
+        # Výpis průběhu zpracování snímků
         if i % 50 == 0:
             print(f"Zpracováno {i} / {n_snimku}")
 
-    # Převedení na numpy array a transpozice (otočení), aby osa X byla čas/snímky
     scan_result = np.array(depth_map).T
     print("Výpočet hotov. Připravuji graf...")
 
-    # 3. Nastavení vizualizace (Natažení osy X pro b351)
+    # Vizualizace
 
-    # Výchozí rozměry
+    # Výchozí rozměry okna pro vizualizaci
     fig_width = 16
     fig_height = 6
 
     if N == 'b351':
-        print(f"Detekován soubor '{N}' -> Zapínám režim natažené osy X.")
-        # Zmenšením výšky při zachování šířky se graf opticky roztáhne do stran
         fig_height = 3
-        # fig_width necháme 16, aby se to vešlo na monitor
+
     elif N == 'b251':
-        print(f"Detekován soubor '{N}' -> Standardní zobrazení.")
         fig_height = 6
 
     plt.figure(figsize=(fig_width, fig_height))
 
-    # Převedení NaN na nulu pro zobrazení
     viz_data = np.nan_to_num(scan_result)
 
-    # Vykreslení: aspect='auto' je klíčové pro natažení pixelů do tvaru okna
+    # Vykreslení
     img_plot = plt.imshow(viz_data, cmap='magma', interpolation='nearest', aspect='auto', origin='lower')
 
     plt.title(f"Výsledný sken: {N}", fontsize=16)
     plt.ylabel("Pozice na senzoru [px]", fontsize=12)
-    plt.xlabel("Číslo snímku (čas)", fontsize=12)
+    plt.xlabel("Číslo snímku", fontsize=12)
 
     # Přidání colorbaru
     cbar = plt.colorbar(img_plot)
-    cbar.set_label('Intenzita/Výška', rotation=90, labelpad=15)
+    cbar.set_label('Výška', rotation=90, labelpad=15)
 
     plt.tight_layout()
 
