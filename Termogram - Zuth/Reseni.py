@@ -5,29 +5,25 @@ import glob
 
 
 def zpracuj_vsechny_obrazky():
-    # 1. Příprava složky pro výsledky
     vystupni_slozka = "vysledky"
     if not os.path.exists(vystupni_slozka):
         os.makedirs(vystupni_slozka)
-        print(f"📁 Vytvořena složka pro ukládání: {vystupni_slozka}")
 
-    # 2. Hledání všech obrázků
+    # Hledání vstupních obrázků
     pripory = ["*.jpg", "*.jpeg", "*.png", "*.bmp", "*.tif"]
     seznam_obrazku = []
     for p in pripory:
         seznam_obrazku.extend(glob.glob(p))
 
     if not seznam_obrazku:
-        print("❌ Žádné obrázky nenalezeny.")
+        print("Žádné obrázky nenalezeny.")
         return
 
-    print(f"🔎 Nalezeno {len(seznam_obrazku)} obrázků. Začínám zpracování...")
+    print(f"Nalezeno {len(seznam_obrazku)} obrázků.")
 
-    # 3. Hlavní smyčka
     for cesta_k_obrazku in seznam_obrazku:
-        print(f"➡️ Zpracovávám: {cesta_k_obrazku}")
+        print(f"Zpracovávám: {cesta_k_obrazku}")
 
-        # Načtení
         img = cv2.imread(cesta_k_obrazku)
         if img is None:
             continue
@@ -35,10 +31,8 @@ def zpracuj_vsechny_obrazky():
         output = img.copy()
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-        # --- PŮVODNÍ LOGIKA DETEKCE ---
-
         # Identifikace panelů
-        thresh_value = 110
+        thresh_value = 130
         _, panels_binary = cv2.threshold(gray, thresh_value, 255, cv2.THRESH_BINARY_INV)
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
         panels_binary = cv2.morphologyEx(panels_binary, cv2.MORPH_OPEN, kernel)
@@ -66,7 +60,7 @@ def zpracuj_vsechny_obrazky():
 
         final_combined = cv2.bitwise_or(final_defects, absolute_hot_masked)
 
-        # Vykreslení (Černé čtverečky)
+        # Vykreslení čtverečků
         contours_defects, _ = cv2.findContours(final_combined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         count = 0
@@ -79,33 +73,27 @@ def zpracuj_vsechny_obrazky():
             if aspect > 4 or aspect < 0.25: continue
 
             count += 1
-            # Černý obdélník
             cv2.rectangle(output, (x, y), (x + w, y + h), (0, 0, 0), 2)
 
-        # --- ZOBRAZENÍ VEDLE SEBE (NOVÉ) ---
-
-        # Spojíme originál (img) a výsledek (output) vedle sebe
-        # np.hstack vyžaduje, aby měly oba obrázky stejnou výšku (což mají)
+        # Vizualizace
         porovnani = np.hstack((img, output))
 
-        # Volitelné: Přidání popisků přímo do obrazu pro přehlednost
-        cv2.putText(porovnani, "ORIGINAL", (30, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        cv2.putText(porovnani, "Original", (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
         # Musíme vypočítat pozici pro druhý nápis (šířka jednoho obrázku + odsazení)
         sirka_obr = img.shape[1]
-        cv2.putText(porovnani, "DETEKCE", (sirka_obr + 30, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        cv2.putText(porovnani, "Detekce", (sirka_obr + 15, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
 
-        # Uložení (Ukládáme jen výsledek s rámečky, ne to dvojité porovnání)
+        # Uložení výsledkůw
         nazev_souboru = os.path.basename(cesta_k_obrazku)
         cesta_ulozeni = os.path.join(vystupni_slozka, "res_" + nazev_souboru)
         cv2.imwrite(cesta_ulozeni, output)
-        print(f"   ✅ Uloženo: {cesta_ulozeni} (Hotspotů: {count})")
+        print(f" Vysledky uloženy: {cesta_ulozeni} (Hotspotů: {count})")
 
         # Zobrazení
         nazev_okna = "Porovnani (Dalsi = MEZERNIK, Konec = Q)"
         cv2.namedWindow(nazev_okna, cv2.WINDOW_NORMAL)
-        # Nastavíme širší okno, aby se tam vešly oba obrázky vedle sebe
-        cv2.resizeWindow(nazev_okna, 1600, 700)
 
+        cv2.resizeWindow(nazev_okna, 1600, 700)
         cv2.imshow(nazev_okna, porovnani)
 
         key = cv2.waitKey(0)
@@ -115,7 +103,6 @@ def zpracuj_vsechny_obrazky():
 
     cv2.destroyAllWindows()
     print("HOTOVO.")
-
 
 if __name__ == "__main__":
     zpracuj_vsechny_obrazky()
