@@ -6,7 +6,7 @@ import cv2
 
 # --- NASTAVENÍ ---
 outAdr = './OUT/'
-N = '251'  # ZDE MĚNÍŠ NÁZEV SOUBORU (např. 'b351' nebo 'b251')
+N = 'b351'  # ZDE MĚNÍŠ NÁZEV SOUBORU (např. 'b351' nebo 'b251')
 input_file = os.path.join(outAdr, f'kamera_{N}.npy')
 
 # --- Parametry detekce a filtrace ---
@@ -140,7 +140,7 @@ def main():
     plt.tight_layout()
 
     # Uložení do souboru
-    output_filename = f"vysledny_sken_{N}_filtered.png"
+    output_filename = f"vysledny_sken_{N}_filtrovany.png"
     plt.savefig(output_filename, dpi=300, bbox_inches='tight')
     print(f"--> Obrázek uložen jako: {output_filename}")
 
