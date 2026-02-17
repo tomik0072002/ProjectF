@@ -6,7 +6,7 @@ import cv2
 
 # Tahání dat
 outAdr = './OUT/'
-N = '251'  # Název souboru ("251", "b351")
+N = 'b351'  # Název souboru ("251", "b351")
 input_file = os.path.join(outAdr, f'kamera_{N}.npy')
 
 # Parametry detekce
