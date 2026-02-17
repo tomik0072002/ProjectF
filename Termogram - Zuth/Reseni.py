@@ -85,7 +85,7 @@ def zpracuj_vsechny_obrazky():
 
         # Uložení výsledkůw
         nazev_souboru = os.path.basename(cesta_k_obrazku)
-        cesta_ulozeni = os.path.join(vystupni_slozka, "res_" + nazev_souboru)
+        cesta_ulozeni = os.path.join(vystupni_slozka, "vysledek_" + nazev_souboru)
         cv2.imwrite(cesta_ulozeni, output)
         print(f" Vysledky uloženy: {cesta_ulozeni} (Hotspotů: {count})")
 
