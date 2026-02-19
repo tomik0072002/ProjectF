@@ -119,7 +119,7 @@ def process_batch_exact_fix(input_folder, output_folder):
         ax[0].axis('off')
 
         ax[1].axis('off')
-        ax[1].set_title("Plocha)")
+        ax[1].set_title("Plocha")
 
         if data_list:
             df = pd.DataFrame(data_list)
