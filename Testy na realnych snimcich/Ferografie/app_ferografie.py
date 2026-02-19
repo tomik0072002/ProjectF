@@ -5,7 +5,6 @@ import pandas as pd
 from typing import Dict, Optional, Any
 
 
-
 def get_mask(img: np.ndarray) -> np.ndarray:
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
