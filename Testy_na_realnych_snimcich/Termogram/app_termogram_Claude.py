@@ -268,6 +268,17 @@ def render_panels(img, annotated, zmap, maska, merged):
 #  SIDEBAR
 # ─────────────────────────────────────────────────────────────
 
+PRESETS = {
+    "standard": dict(blur_k=5,  z_window=71,  z_thresh=3.0, morph_k=3, merge_dist=10, min_area=10, max_area=2000, max_aspect=4.0, conf_min=0),
+    "strict":   dict(blur_k=7,  z_window=91,  z_thresh=3.5, morph_k=5, merge_dist=10, min_area=10, max_area=500,  max_aspect=3.5, conf_min=1),
+    "sensitive":dict(blur_k=3,  z_window=51,  z_thresh=2.5, morph_k=3, merge_dist=15, min_area=5,  max_area=3000, max_aspect=5.0, conf_min=0),
+    "large":    dict(blur_k=9,  z_window=121, z_thresh=3.0, morph_k=5, merge_dist=20, min_area=10, max_area=2000, max_aspect=4.0, conf_min=0),
+}
+
+def apply_preset(name: str):
+    for k, v in PRESETS[name].items():
+        st.session_state[f"sl_{k}"] = v
+
 with st.sidebar:
     st.markdown("## 🔥 FV Hotspot Detektor")
     st.caption("v4 – čistě Z-skóre přístup")
@@ -277,62 +288,68 @@ with st.sidebar:
                                  type=["jpg","jpeg","png","bmp","tif"])
     st.markdown("---")
 
+    # ── Rychlé předvolby – PŘED slidery aby session_state byl nastaven ──
+    st.markdown('<div class="sec-hdr">⚡ Rychlé předvolby</div>', unsafe_allow_html=True)
+    st.caption("Kliknutím se parametry níže okamžitě nastaví")
+    p1, p2 = st.columns(2)
+    p3, p4 = st.columns(2)
+    if p1.button("⚙️ Standardní",  use_container_width=True, help="Dobrý výchozí bod pro většinu snímků"):
+        apply_preset("standard")
+    if p2.button("🎯 Přísnější",   use_container_width=True, help="Méně false positives, jen výrazné hotspoty"):
+        apply_preset("strict")
+    if p3.button("🔍 Citlivější",  use_container_width=True, help="Více detekcí – vhodné pro slabé hotspoty"):
+        apply_preset("sensitive")
+    if p4.button("🗺️ Velké panely", use_container_width=True, help="Větší okno pro snímky s velkými panely"):
+        apply_preset("large")
+
+    st.markdown("---")
+
     # ── Předzpracování ───────────────────────────────────────
     st.markdown('<div class="sec-hdr">⚙️ Předzpracování</div>', unsafe_allow_html=True)
-    blur_k = st.slider("Gaussian blur [px]", 0, 15, 5, 2,
+    blur_k = st.slider("Gaussian blur [px]", 0, 15, 5, 2, key="sl_blur_k",
         help="Potlačí JPEG šum a texturu buněk před výpočtem Z-skóre.\n"
              "Doporučeno: 5–9. Příliš velký rozmaže skutečné hotspoty.")
 
     # ── Z-skóre ──────────────────────────────────────────────
     st.markdown('<div class="sec-hdr">📊 Z-skóre parametry</div>', unsafe_allow_html=True)
-    z_window = st.slider("Okno Z-skóre [px]", 21, 201, 71, 10,
+    z_window = st.slider("Okno Z-skóre [px]", 21, 201, 71, 10, key="sl_z_window",
         help="Velikost okolí pro výpočet lokálního průměru a std.\n\n"
              "⚠️ Toto je nejdůležitější parametr:\n"
              "• Příliš malé (< 51px) → zachytí mřížku buněk a rámy jako anomálie\n"
              "• Příliš velké (> 150px) → sousední hotspoty splývají s pozadím\n"
              "• Doporučeno: 2–3× větší než průměrná solární buňka v px")
-    z_thresh = st.slider("Z-skóre práh", 1.0, 8.0, 3.0, 0.1,
-        help="Hotspot = pixel s Z ≥ práh.\n"
+    z_thresh = st.slider("Z-skóre práh", 1.0, 8.0, 3.0, 0.1, key="sl_z_thresh",
+        help="Hotspot = pixel s Z >= práh.\n"
              "• Nízký (< 2.5) → více detekcí, více false positives\n"
              "• Vysoký (> 4.0) → jen velmi výrazné hotspoty\n"
              "• Start: 3.0, dolaďte podle výsledků")
 
     # ── Čištění masky ────────────────────────────────────────
     st.markdown('<div class="sec-hdr">🧹 Čištění masky</div>', unsafe_allow_html=True)
-    morph_k = st.slider("Morfologické otevření [px]", 0, 11, 3, 2,
+    morph_k = st.slider("Morfologické otevření [px]", 0, 11, 3, 2, key="sl_morph_k",
         help="Odstraní izolované pixely a drobný šum z detekční masky.\n"
              "0 = vypnuto. 3–5 doporučeno.")
-    merge_dist = st.slider("Sloučení fragmentů [px]", 0, 40, 10, 5,
+    merge_dist = st.slider("Sloučení fragmentů [px]", 0, 40, 10, 5, key="sl_merge_dist",
         help="Blízké fragmenty jednoho hotspotu se sloučí do jednoho.\n"
              "0 = vypnuto.")
 
     # ── Filtrování kontur ─────────────────────────────────────
     st.markdown('<div class="sec-hdr">🔍 Filtrování kontur</div>', unsafe_allow_html=True)
-    min_area   = st.slider("Min. plocha [px²]", 5, 200, 10, 5,
+    min_area   = st.slider("Min. plocha [px²]", 5, 200, 10, 5, key="sl_min_area",
         help="Odstraní šumové body. Hotspot typicky > 10 px².")
-    max_area   = st.slider("Max. plocha [px²]", 100, 10000, 2000, 100,
+    max_area   = st.slider("Max. plocha [px²]", 100, 10000, 2000, 100, key="sl_max_area",
         help="⚠️ Klíčový filtr: velké bílé oblasti v masce nejsou hotspoty\n"
              "ale teplotní gradienty nebo rámy. Nastavte na max. očekávanou\n"
              "plochu skutečného hotspotu.")
-    max_aspect = st.slider("Max. poměr stran", 1.5, 10.0, 4.0, 0.5,
+    max_aspect = st.slider("Max. poměr stran", 1.5, 10.0, 4.0, 0.5, key="sl_max_aspect",
         help="Příliš protáhlé tvary (kabely, rámy) se odfiltrují.")
-    conf_min   = st.slider("Min. spolehlivost (0–5)", 0, 4, 0,
+    conf_min   = st.slider("Min. spolehlivost (0–5)", 0, 4, 0, key="sl_conf_min",
         help="0 = zobraz vše\n"
-             "Skóre: +1 za Z≥1.5×práh, +1 za Z≥2.5×práh, +1 za Z≥4×práh,\n"
+             "Skóre: +1 za Z>=1.5×práh, +1 za Z>=2.5×práh, +1 za Z>=4×práh,\n"
              "+1 za plochu 10–500px², +1 za kulatý tvar")
 
     st.markdown("---")
     show_debug = st.toggle("🔬 Zobrazit debug panel", value=True)
-
-    # ── Rychlé předvolby ─────────────────────────────────────
-    st.markdown('<div class="sec-hdr">⚡ Rychlé předvolby</div>', unsafe_allow_html=True)
-    st.caption("Zkopíruj hodnoty do sliderů výše")
-    with st.expander("Přísnější (méně false positives)"):
-        st.code("blur=7, okno=91, práh=3.5\nmorph=5, max_plocha=500")
-    with st.expander("Citlivější (více detekcí)"):
-        st.code("blur=3, okno=51, práh=2.5\nmorph=3, max_plocha=3000")
-    with st.expander("Velké snímky / velké panely"):
-        st.code("blur=9, okno=121, práh=3.0\nmorph=5, max_plocha=2000")
 
 
 # ─────────────────────────────────────────────────────────────
