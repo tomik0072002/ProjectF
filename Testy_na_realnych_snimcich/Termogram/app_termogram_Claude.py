@@ -225,11 +225,12 @@ def anotuj(img, hotspoty, z_thresh, z_window):
         lbl = f"#{hs.id} Z{hs.max_z:.1f}"
         cv2.putText(out,lbl,(x1,y1-4),cv2.FONT_HERSHEY_SIMPLEX,0.4,(0,0,0),2,cv2.LINE_AA)
         cv2.putText(out,lbl,(x1,y1-4),cv2.FONT_HERSHEY_SIMPLEX,0.4,b,1,cv2.LINE_AA)
-    for i, line in enumerate([f"Hotspoty:{len(hotspoty)}",
-                               f"Z≥{z_thresh} okno:{z_window}px"]):
-        y = 22 + i * 20
-        cv2.putText(out,line,(8,y),cv2.FONT_HERSHEY_SIMPLEX,0.5,(0,0,0),3,cv2.LINE_AA)
-        cv2.putText(out,line,(8,y),cv2.FONT_HERSHEY_SIMPLEX,0.5,(255,255,255),1,cv2.LINE_AA)
+    for i, line in enumerate([f"Hotspoty: {len(hotspoty)}",
+                               f"Z >= {z_thresh}",
+                               f"Okno: {z_window} px"]):
+        y = 22 + i * 18
+        cv2.putText(out,line,(8,y),cv2.FONT_HERSHEY_SIMPLEX,0.45,(0,0,0),3,cv2.LINE_AA)
+        cv2.putText(out,line,(8,y),cv2.FONT_HERSHEY_SIMPLEX,0.45,(255,255,255),1,cv2.LINE_AA)
     return out
 
 
