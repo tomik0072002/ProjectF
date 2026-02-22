@@ -352,7 +352,7 @@ def zpracuj(cesta: str, output_folder: str) -> Optional[Vysledek]:
     zmap, maska, hotspoty = detekuj(img)
 
     log.info(f"  → Hotspoty: {len(hotspoty)}  "
-             f"(Z≥{Z_THRESH}, okno {Z_WINDOW}px)")
+             f"(Z>={Z_THRESH}, okno {Z_WINDOW}px)")
 
     v = Vysledek(soubor=cesta, n_hotspotu=len(hotspoty),
                  hotspoty=hotspoty, z_thresh=Z_THRESH, z_window=Z_WINDOW)
