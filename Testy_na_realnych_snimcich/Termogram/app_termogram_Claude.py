@@ -1,10 +1,3 @@
-"""
-╔══════════════════════════════════════════════════════════════╗
-║   HOTSPOTY FV PANELŮ – Streamlit aplikace  v4               ║
-║   Spuštění: streamlit run hotspoty_app.py                    ║
-╚══════════════════════════════════════════════════════════════╝
-"""
-
 import io
 import json
 import cv2
@@ -16,9 +9,8 @@ import pandas as pd
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional
 
-# ─────────────────────────────────────────────────────────────
-#  STRANKA
-# ─────────────────────────────────────────────────────────────
+
+#  Nastvení stránky
 
 st.set_page_config(page_title="FV Hotspot Detektor", page_icon="!",
                    layout="wide", initial_sidebar_state="expanded")
@@ -94,9 +86,8 @@ section[data-testid="stSidebar"] div[data-testid="column"] .stButton > button {
 """, unsafe_allow_html=True)
 
 
-# ─────────────────────────────────────────────────────────────
-#  DATOVA TRIDA
-# ─────────────────────────────────────────────────────────────
+
+#  Datová třída
 
 @dataclass
 class Hotspot:
@@ -116,9 +107,7 @@ class Hotspot:
     def cy(self): return self.y + self.h // 2
 
 
-# ─────────────────────────────────────────────────────────────
-#  DETEKCE
-# ─────────────────────────────────────────────────────────────
+#  Detekce hotspotů
 
 def priprav(img: np.ndarray, blur_k: int) -> np.ndarray:
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32)
@@ -129,17 +118,17 @@ def priprav(img: np.ndarray, blur_k: int) -> np.ndarray:
 
 
 def zscore_mapa(gray: np.ndarray, window: int) -> np.ndarray:
-    k     = window | 1
-    mu    = cv2.boxFilter(gray, -1, (k, k))
+    k = window | 1
+    mu = cv2.boxFilter(gray, -1, (k, k))
     sq_mu = cv2.boxFilter(gray ** 2, -1, (k, k))
-    std   = np.sqrt(np.clip(sq_mu - mu ** 2, 0, None)) + 1e-6
+    std = np.sqrt(np.clip(sq_mu - mu ** 2, 0, None)) + 1e-6
     return (gray - mu) / std
 
 
 def sestav_masku(zmap: np.ndarray, thresh: float, morph_k: int) -> np.ndarray:
     maska = (zmap >= thresh).astype(np.uint8) * 255
     if morph_k >= 3:
-        k     = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (morph_k | 1, morph_k | 1))
+        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (morph_k | 1, morph_k | 1))
         maska = cv2.morphologyEx(maska, cv2.MORPH_OPEN, k)
     return maska
 
@@ -155,19 +144,19 @@ def spocti_confidence(max_z: float, area: float, circ: float, thresh: float) -> 
     if max_z >= thresh * 1.5: s += 1
     if max_z >= thresh * 2.5: s += 1
     if max_z >= thresh * 4.0: s += 1
-    if 10 <= area <= 500:     s += 1
-    if circ > 0.4:            s += 1
+    if 10 <= area <= 500: s += 1
+    if circ > 0.4: s += 1
     return s
 
 
 def detekuj(img_bytes: bytes, params: str):
-    p   = json.loads(params)
+    p = json.loads(params)
     arr = np.frombuffer(img_bytes, np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
 
-    gray   = priprav(img, p["blur_k"])
-    zmap   = zscore_mapa(gray, p["z_window"])
-    maska  = sestav_masku(zmap, p["z_thresh"], p["morph_k"])
+    gray = priprav(img, p["blur_k"])
+    zmap = zscore_mapa(gray, p["z_window"])
+    maska = sestav_masku(zmap, p["z_thresh"], p["morph_k"])
     merged = sluc(maska, p["merge_dist"])
 
     cnts, _ = cv2.findContours(merged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -182,16 +171,16 @@ def detekuj(img_bytes: bytes, params: str):
         if asp > p["max_aspect"] or asp < 1.0 / p["max_aspect"]:
             continue
 
-        cm    = np.zeros(gray.shape[:2], np.uint8)
+        cm = np.zeros(gray.shape[:2], np.uint8)
         cv2.drawContours(cm, [cnt], -1, 255, -1)
-        px_z  = zmap[cm > 0]
-        px_g  = gray[cm > 0]
-        max_z  = float(px_z.max())  if px_z.size else 0.0
+        px_z = zmap[cm > 0]
+        px_g = gray[cm > 0]
+        max_z = float(px_z.max())  if px_z.size else 0.0
         mean_z = float(px_z.mean()) if px_z.size else 0.0
-        max_i  = float(px_g.max())  if px_g.size else 0.0
-        perim  = cv2.arcLength(cnt, True)
-        circ   = (4 * np.pi * area / perim ** 2) if perim > 0 else 0.0
-        conf   = spocti_confidence(max_z, area, circ, p["z_thresh"])
+        max_i = float(px_g.max())  if px_g.size else 0.0
+        perim = cv2.arcLength(cnt, True)
+        circ = (4 * np.pi * area / perim ** 2) if perim > 0 else 0.0
+        conf = spocti_confidence(max_z, area, circ, p["z_thresh"])
 
         if conf < p["conf_min"]:
             continue
@@ -210,9 +199,7 @@ def detekuj(img_bytes: bytes, params: str):
     return img, gray, zmap, maska, merged, hotspoty
 
 
-# ─────────────────────────────────────────────────────────────
-#  ANOTACE
-# ─────────────────────────────────────────────────────────────
+#  Anotace
 
 CONF_BGR = {
     0:(160,160,160), 1:(0,210,210), 2:(0,165,255),
@@ -268,9 +255,7 @@ def render_panels(img, annotated, zmap, maska, merged):
     return fig
 
 
-# ─────────────────────────────────────────────────────────────
-#  SIDEBAR
-# ─────────────────────────────────────────────────────────────
+#  Sidebar
 
 PRESETS = {
     "standard": dict(blur_k=5,  z_window=71,  z_thresh=3.0, morph_k=3, merge_dist=10,
@@ -296,7 +281,7 @@ with st.sidebar:
                                  type=["jpg","jpeg","png","bmp","tif"])
     st.markdown("---")
 
-    # ── Rychle predvolby ─────────────────────────────────────
+    # Rychlé předvolby (sidebar)
     st.markdown('<div class="sec-hdr">Rychle predvolby</div>', unsafe_allow_html=True)
     st.caption("Kliknutim se parametry okamzite nastavi")
     p1, p2 = st.columns(2)
@@ -316,13 +301,13 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # ── Predzpracovani ────────────────────────────────────────
+    # Předzpracování
     st.markdown('<div class="sec-hdr">Predzpracovani</div>', unsafe_allow_html=True)
     blur_k = st.slider("Gaussian blur [px]", 0, 15, 5, 2, key="sl_blur_k",
         help="Potlaci JPEG sum a texturu bunek pred vypoctem Z-skore.\n"
              "Doporuceno: 5-9. Prilis velky rozmazee skutecne hotspoty.")
 
-    # ── Z-skore ──────────────────────────────────────────────
+    # Z-skóre
     st.markdown('<div class="sec-hdr">Z-skore parametry</div>', unsafe_allow_html=True)
     z_window = st.slider("Okno Z-skore [px]", 21, 201, 71, 10, key="sl_z_window",
         help="Velikost okoli pro vypocet lokalniho prumeru a std.\n"
@@ -335,7 +320,7 @@ with st.sidebar:
              "Vysoky (> 4.0): jen vyrazne hotspoty.\n"
              "Start: 3.0, doladte podle vysledku.")
 
-    # ── Cisteni masky ─────────────────────────────────────────
+    # Čištění masky
     st.markdown('<div class="sec-hdr">Cisteni masky</div>', unsafe_allow_html=True)
     morph_k = st.slider("Morfolog. otevreni [px]", 0, 11, 3, 2, key="sl_morph_k",
         help="Odstrani izalovane pixely a drobny sum z masky.\n"
@@ -344,7 +329,7 @@ with st.sidebar:
         help="Fragmenty blize nez X px se slouci.\n"
              "0 = vypnuto.")
 
-    # ── Filtrovani kontur ─────────────────────────────────────
+    # Filtrování kontur
     st.markdown('<div class="sec-hdr">Filtrovani kontur</div>', unsafe_allow_html=True)
     min_area   = st.slider("Min. plocha [px2]", 5, 200, 10, 5, key="sl_min_area",
         help="Odstrani sumove body. Hotspot typicky > 10 px2.")
@@ -362,9 +347,9 @@ with st.sidebar:
     show_debug = st.toggle("Zobrazit debug panel", value=True)
 
 
-# ─────────────────────────────────────────────────────────────
-#  HLAVNI OBSAH
-# ─────────────────────────────────────────────────────────────
+
+#  Hlavní obsah
+
 
 st.title("FV Hotspot Detektor")
 
@@ -392,7 +377,7 @@ if uploaded is None:
 """)
     st.stop()
 
-# ── Cache + vypocet ───────────────────────────────────────────
+
 params = json.dumps({
     "blur_k": blur_k, "z_window": z_window, "z_thresh": z_thresh,
     "morph_k": morph_k, "merge_dist": merge_dist,
@@ -411,7 +396,7 @@ with st.spinner("Pocitam Z-skore mapu..."):
 
 annotated = anotuj(img, hotspoty, z_thresh, z_window)
 
-# ── Metriky ──────────────────────────────────────────────────
+# Metriky
 n_h = sum(1 for h in hotspoty if h.confidence >= 3)
 n_m = sum(1 for h in hotspoty if 1 <= h.confidence < 3)
 n_l = sum(1 for h in hotspoty if h.confidence == 0)
@@ -428,7 +413,7 @@ for col, val, lbl in zip(cols,
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# ── Hlavni panely ─────────────────────────────────────────────
+# Hlavní panely
 c1, c2, c3 = st.columns(3)
 with c1:
     st.markdown("**Originalni snimek**")
@@ -440,7 +425,7 @@ with c3:
     st.markdown("**Anotovany vysledek**")
     st.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), use_container_width=True)
 
-# ── Debug ─────────────────────────────────────────────────────
+# Debug
 if show_debug:
     st.markdown("---")
     st.markdown("### Debug")
@@ -462,7 +447,7 @@ if show_debug:
 
 st.markdown("---")
 
-# ── Tabulka hotspotu ──────────────────────────────────────────
+# Tabulka hotspotů
 st.markdown(f"### Nalezene hotspoty: `{len(hotspoty)}`")
 if hotspoty:
     rows = []
@@ -488,7 +473,7 @@ else:
 
 st.markdown("---")
 
-# ── Export ────────────────────────────────────────────────────
+# Export
 st.markdown("### Export")
 fname = uploaded.name.rsplit(".", 1)[0]
 e1, e2, e3 = st.columns(3)
