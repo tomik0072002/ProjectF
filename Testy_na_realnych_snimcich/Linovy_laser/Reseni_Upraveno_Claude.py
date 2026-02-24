@@ -13,28 +13,28 @@ OUT_ADR    = './OUT/'
 FILE_NAME  = '251'
 
 # Detekce laseru
-LASER_AXIS    = 0      # 0 = laser je horizontálně
+LASER_AXIS = 0      # 0 = laser je horizontálně
                        # 1 = laser je vertikálně
-THRESHOLD     = 20     # minimální jas pro laser
-PEAK_WINDOW   = 10     # pološířka okna pro výpočet těžiště okolo maxima [px]
+THRESHOLD = 20     # minimální jas pro laser
+PEAK_WINDOW = 10     # pološířka okna pro výpočet těžiště okolo maxima [px]
 LASER_CHANNEL = 'GRAY' # kanál pro extrakci signálu:
 
 # Filtrování šumu
-ENABLE_MEDIAN   = True   # mediánový filtr
-MEDIAN_KERNEL   = 3      # velikost kernelu mediánu
+ENABLE_MEDIAN = True   # mediánový filtr
+MEDIAN_KERNEL = 3      # velikost kernelu mediánu
 ENABLE_GAUSSIAN = False  # gaussovský filtr
-GAUSSIAN_SIGMA  = 1.0    # sigma gaussovského filtru
-OUTLIER_SIGMA   = 0.0
+GAUSSIAN_SIGMA = 1.0    # sigma gaussovského filtru
+OUTLIER_SIGMA = 0.0
 
 # Post-processing depth mapy
-SMOOTH_KERNEL   = 3      # mediánový filtr na výslednou depth mapu
-MIN_VALUE       = 15     # hodnoty pod tímto prahem jsou vynulovány
+SMOOTH_KERNEL = 3      # mediánový filtr na výslednou depth mapu
+MIN_VALUE = 15     # hodnoty pod tímto prahem jsou vynulovány
 
 # Vizualizace
-COLORMAP  = 'magma'   # barevná mapa
-SAVE_PNG  = True      # uložit výsledný graf jako PNG
-SAVE_NPY  = True      # uložit depth mapu jako .npy
-DPI       = 300       # rozlišení výstupního PNG
+COLORMAP = 'magma'   # barevná mapa
+SAVE_PNG = True      # uložit výsledný graf jako PNG
+SAVE_NPY = True      # uložit depth mapu jako .npy
+DPI = 300       # rozlišení výstupního PNG
 
 
 #  Logování
