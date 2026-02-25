@@ -19,7 +19,7 @@ from typing import Dict, Optional, Any
 #  Konfigurace
 
 INPUT_FOLDER   = '.'
-OUTPUT_FOLDER  = 'vysledky_Cloude'
+OUTPUT_FOLDER  = 'vysledky_Vylepsene'
 
 # Kalibrace (přepočet pixelů na reálné jednotky)
 PX_PER_MM      = 10.0         # kolik pixelů odpovídá 1 mm (zadejte svou hodnotu)
