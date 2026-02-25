@@ -338,8 +338,6 @@ def z_gauge_html(max_z: float, z_thresh: float, zmap_max: float) -> str:
 
 # Detekční maska bar
 
-# Detekční maska bar
-
 def maska_status_html(pct: float) -> str:
     if pct == 0:
         color, label = "#ef4444", "Prázdná – snižte Z práh"
@@ -352,7 +350,7 @@ def maska_status_html(pct: float) -> str:
     else:
         color, label = "#ef4444", "Příliš mnoho pixelů"
 
-    bar_pct = min(100, pct * 10)   # 20 % → 100 % baru
+    bar_pct = min(100, pct * 10)   # 10 % → 100 % baru
     return f"""
     <div class="zbar-wrap">
         <div class="zbar-title">Pokrytí detekční masky</div>
@@ -381,15 +379,14 @@ FILTER_ZAVAZNOST_MAP = {
     "Pouze kritické":         3,
 }
 
+# Pouze 3 předvolby – "Velké panely" odstraněno, nahrazeno radio buttonem velikosti buněk
 PRESETS = {
-    "standard":  dict(blur_k=7,  z_window=91,  z_thresh=3.2, morph_k=5, merge_dist=15,
+    "standard":  dict(blur_k=7, z_window=91,  z_thresh=3.2, morph_k=5, merge_dist=15,
                       min_area=15, max_area=800,  max_aspect=3.5, conf_min=1),
-    "strict":    dict(blur_k=7,  z_window=91,  z_thresh=3.5, morph_k=5, merge_dist=10,
-                      min_area=10, max_area=500,  max_aspect=3.5, conf_min=1),
-    "sensitive": dict(blur_k=3,  z_window=51,  z_thresh=2.5, morph_k=3, merge_dist=15,
+    "sensitive": dict(blur_k=3, z_window=51,  z_thresh=2.5, morph_k=3, merge_dist=15,
                       min_area=5,  max_area=3000, max_aspect=5.0, conf_min=0),
-    "large":     dict(blur_k=9,  z_window=121, z_thresh=3.0, morph_k=5, merge_dist=20,
-                      min_area=10, max_area=2000, max_aspect=4.0, conf_min=0),
+    "strict":    dict(blur_k=7, z_window=91,  z_thresh=3.5, morph_k=5, merge_dist=10,
+                      min_area=10, max_area=500,  max_aspect=3.5, conf_min=1),
 }
 
 # Zpětné mapování conf_min → label pro radio button
@@ -407,7 +404,6 @@ def apply_preset(name: str):
     st.session_state["filter_zavaznost"] = CONF_TO_FILTER.get(cm, "Střední a kritické")
 
 
-
 #  Sidebar
 
 with st.sidebar:
@@ -418,19 +414,15 @@ with st.sidebar:
                                  type=["jpg","jpeg","png","bmp","tif"])
     st.markdown("---")
 
-    # Rychlé předvolby
+    # Rychlé předvolby – 3 tlačítka přes celou šířku
     st.markdown('<div class="sec-hdr">Rychlé předvolby</div>', unsafe_allow_html=True)
     st.caption("Kliknutím se nastaví předvolené parametry")
-    p1, p2 = st.columns(2)
-    p3, p4 = st.columns(2)
-    if p1.button("Standardní",  use_container_width=True):
+    if st.button("Standardní",  use_container_width=True):
         apply_preset("standard")
-    if p2.button("Přísnější",   use_container_width=True):
-        apply_preset("strict")
-    if p3.button("Citlivější",  use_container_width=True):
+    if st.button("Citlivější",  use_container_width=True):
         apply_preset("sensitive")
-    if p4.button("Velké panely", use_container_width=True):
-        apply_preset("large")
+    if st.button("Přísnější",   use_container_width=True):
+        apply_preset("strict")
 
     st.markdown("---")
 
@@ -515,17 +507,22 @@ px_total  = maska.size
 px_active = int((maska > 0).sum())
 pct       = 100 * px_active / px_total
 
-# Počty hotspotů – bez C skóre, jen lidsky čitelné kategorie
+# Počty hotspotů
 cols = st.columns(4)
-for col, val, lbl in zip(cols,
-    [len(hotspoty), n_krit, n_str, n_slab],
-    ["Celkem hotspotů", "Kritické", "Střední", "Slabé"]):
-    col.markdown(
-        f'<div class="metric-box"><div class="val">{val}</div>'
-        f'<div class="lbl">{lbl}</div></div>',
-        unsafe_allow_html=True)
+for col, (val, lbl) in zip(cols, [
+    (len(hotspoty), "Celkem hotspotů"),
+    (n_krit, "Kritické hotspoty"),
+    (n_str, "Střední hotspoty"),
+    (n_slab, "Slabé hotspoty"),
+]):
 
-st.markdown("<br>", unsafe_allow_html=True)
+    custom_style = "color: #ef4444;" if lbl == "Celkem hotspotů" else ""
+    col.markdown(
+        f'<div class="metric-box">'
+        f'<div class="val" style="{custom_style}">{val}</div>'
+        f'<div class="lbl">{lbl}</div>'
+        f'</div>',
+        unsafe_allow_html=True)
 
 # Z-skóre + pokrytí detekční masky bar
 gc1, gc2 = st.columns(2)
@@ -555,12 +552,6 @@ if show_debug:
     fig = render_panels(img, annotated, zmap, maska, merged)
     st.image(fig_to_bytes(fig), use_container_width=True)
 
-    col_d1, col_d2, col_d3, col_d4 = st.columns(4)
-    col_d1.metric("Aktivní px v masce",   f"{px_active:,}")
-    col_d2.metric("Max Z v celém snímku", f"{zmap_max:.2f}")
-    col_d3.metric("Z práh",               f"{z_thresh}")
-    col_d4.metric("Z okno",               f"{z_window} px")
-
 st.markdown("---")
 
 # Tabulka hotspotů – bez C skóre, jen Závažnost
@@ -576,7 +567,8 @@ if hotspoty:
             "Max jas":          h.max_intensity,
             "Plocha [px²]":     h.area,
             "Poměr stran":      h.aspect_ratio,
-            "Souřadnice x a y": f"{h.x} a {h.y}",
+            "Souřadnice X":     f"{h.x}",
+            "Souřadnice Y":     f"{h.y}",
             "Šířka × Výška":    f"{h.w}×{h.h}",
         })
     df = pd.DataFrame(rows)
