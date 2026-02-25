@@ -31,7 +31,7 @@ import matplotlib.patches as mpatches
 # ─────────────────────────────────────────────────────────────
 
 INPUT_FOLDER  = '.'
-OUTPUT_FOLDER = 'vysledky'
+OUTPUT_FOLDER = 'Výsledky_vylepšeno'
 
 # Předzpracování
 PRE_BLUR      = 7         # Gaussian blur před Z-skóre [px, liché]
@@ -68,8 +68,8 @@ FILTER_ZAVAZNOST = "stredni"
 FILTER_PRESET = ""
 
 # Výstup
-SHOW_WINDOW   = True      # Zobrazit CV2 okno s porovnáním
-SHOW_PLOT     = True      # Zobrazit matplotlib graf
+SHOW_WINDOW   = False     # Zobrazit CV2 okno s porovnáním
+SHOW_PLOT     = False     # Zobrazit matplotlib graf
 SAVE_PNG      = True      # Uložit anotovaný PNG
 SAVE_CSV      = True      # Uložit CSV souhrn
 SAVE_DEBUG    = True      # Uložit debug graf (4 panely)
@@ -442,7 +442,8 @@ def vykresli(img: np.ndarray, annotated: np.ndarray,
                     facecolor=fig.get_facecolor())
         log.info(f"  Debug graf: {save_path}")
 
-    plt.show()
+    if SHOW_PLOT:
+        plt.show()
     plt.close(fig)
 
 

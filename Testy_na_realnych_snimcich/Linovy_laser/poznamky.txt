@@ -1,0 +1,7 @@
+Jedna se o vizualizaci mereni. 
+Jednotlive snímky jsou ukladany jako numpy list. 
+
+pro vizu mereni zmente promenou N
+
+N='b351'- toto je bocni sken palety
+N='251' - toto je vrchni sken palety
