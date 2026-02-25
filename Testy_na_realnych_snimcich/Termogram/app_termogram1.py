@@ -126,16 +126,28 @@ class Hotspot:
     x: int; y: int; w: int; h: int
     area: float
     aspect_ratio: float
-    circularity: float
     max_z: float
     mean_z: float
     max_intensity: float
-    confidence: int
+    confidence: int  # interní, nezobrazuje se uživateli
 
     @property
     def cx(self): return self.x + self.w // 2
     @property
     def cy(self): return self.y + self.h // 2
+
+    @property
+    def zavaznost(self) -> str:
+        """Lidsky čitelná závažnost odvozená z confidence skóre."""
+        if self.confidence >= 3: return "Kritický"
+        if self.confidence >= 1: return "Střední"
+        return "Slabý"
+
+    @property
+    def zavaznost_color(self) -> str:
+        if self.confidence >= 3: return "#ef4444"
+        if self.confidence >= 1: return "#f97316"
+        return "#eab308"
 
 
 #  Detekce
@@ -180,7 +192,7 @@ def spocti_confidence(max_z: float, area: float, circ: float, thresh: float) -> 
     return s
 
 
-def detekuj(img_bytes: bytes, params: str):
+def detekce(img_bytes: bytes, params: str):
     p = json.loads(params)
     arr = np.frombuffer(img_bytes, np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
@@ -219,7 +231,7 @@ def detekuj(img_bytes: bytes, params: str):
         hotspoty.append(Hotspot(
             id=len(hotspoty)+1, x=x, y=y, w=w, h=h,
             area=round(area, 1), aspect_ratio=round(asp, 2),
-            circularity=round(circ, 3), max_z=round(max_z, 2),
+            max_z=round(max_z, 2),
             mean_z=round(mean_z, 2), max_intensity=round(max_i, 1),
             confidence=conf,
         ))
@@ -248,9 +260,7 @@ def anotuj(img, hotspoty, z_thresh, z_window):
         lbl = f"#{hs.id} Z{hs.max_z:.1f}"
         cv2.putText(out, lbl, (x1, y1-4), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0,0,0), 2, cv2.LINE_AA)
         cv2.putText(out, lbl, (x1, y1-4), cv2.FONT_HERSHEY_SIMPLEX, 0.4, b, 1, cv2.LINE_AA)
-    for i, line in enumerate([f"Hotspoty: {len(hotspoty)}",
-                               f"Z >= {z_thresh}",
-                               f"Okno: {z_window} px"]):
+    for i, line in enumerate([f"Hotspoty: {len(hotspoty)}"]):
         y = 22 + i * 18
         cv2.putText(out, line, (8, y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0,0,0), 3, cv2.LINE_AA)
         cv2.putText(out, line, (8, y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255,255,255), 1, cv2.LINE_AA)
@@ -270,10 +280,10 @@ def render_panels(img, annotated, zmap, maska, merged):
     fig, axes = plt.subplots(1, 4, figsize=(22, 5))
     fig.patch.set_facecolor('#080b10')
     panels = [
-        (cv2.cvtColor(img,       cv2.COLOR_BGR2RGB), "Originální snímek",  None),
-        (np.clip(zmap, -2, None),                    "Z-skóre mapa",       'RdYlBu_r'),
-        (maska,                                       "Detekční maska",     'gray'),
-        (cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB),  "Anotovaný výsledek", None),
+        (cv2.cvtColor(img, cv2.COLOR_BGR2RGB), "Originální snímek",  None),
+        (np.clip(zmap, -2, None), "Z-skóre mapa", 'RdYlBu_r'),
+        (maska, "Detekční maska", 'gray'),
+        (cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), "Anotovaný výsledek", None),
     ]
     for ax, (data, title, cmap) in zip(axes, panels):
         im = ax.imshow(data, cmap=cmap)
@@ -286,7 +296,7 @@ def render_panels(img, annotated, zmap, maska, merged):
     return fig
 
 
-# ─── Z-skóre gauge bar ────────────────────────────────────────────────────────
+# Z-skóre bar
 
 def z_gauge_html(max_z: float, z_thresh: float, zmap_max: float) -> str:
     z_max_display = max(zmap_max, z_thresh * 4.5, 12.0)
@@ -295,11 +305,11 @@ def z_gauge_html(max_z: float, z_thresh: float, zmap_max: float) -> str:
     if max_z < z_thresh:
         color, label = "#4b5563", "Pod prahem"
     elif max_z < z_thresh * 2:
-        color, label = "#eab308", "Slabý hotspot"
+        color, label = "#eab308", "Hotspot"
     elif max_z < z_thresh * 4:
-        color, label = "#f97316", "Střední hotspot"
+        color, label = "#f97316", "Hotspot"
     else:
-        color, label = "#ef4444", "Silný hotspot"
+        color, label = "#ef4444", "Hotspot"
 
     thresh_pct  = min(99, (z_thresh / z_max_display) * 100)
     thresh2_pct = min(99, (z_thresh * 2 / z_max_display) * 100)
@@ -326,42 +336,49 @@ def z_gauge_html(max_z: float, z_thresh: float, zmap_max: float) -> str:
     """
 
 
-# ─── Maska health indicator ───────────────────────────────────────────────────
+# Detekční maska bar
+
+# Detekční maska bar
 
 def maska_status_html(pct: float) -> str:
     if pct == 0:
-        color, label, icon = "#ef4444", "Prázdná – snižte Z práh", "✕"
+        color, label = "#ef4444", "Prázdná – snižte Z práh"
     elif pct < 1:
-        color, label, icon = "#22c55e", "OK", "✓"
+        color, label = "#22c55e", "OK"
     elif pct < 5:
-        color, label, icon = "#eab308", "Mírně vysoké pokrytí", "⚠"
-    elif pct < 20:
-        color, label, icon = "#f97316", "Vysoké – zvyšte Z práh", "⚠"
+        color, label = "#eab308", "Mírně vysoké pokrytí"
+    elif pct < 10:
+        color, label = "#f97316", "Vysoké – zvyšte Z práh"
     else:
-        color, label, icon = "#ef4444", "Příliš mnoho pixelů", "✕"
+        color, label = "#ef4444", "Příliš mnoho pixelů"
 
-    bar_pct = min(100, pct * 5)   # 20 % → 100 % baru
+    bar_pct = min(100, pct * 10)   # 20 % → 100 % baru
     return f"""
     <div class="zbar-wrap">
         <div class="zbar-title">Pokrytí detekční masky</div>
-        <div class="zbar-val" style="color:{color}">{pct:.1f} %
-            <span style="font-size:1rem">&nbsp;{icon}</span>
-        </div>
+        <div class="zbar-val" style="color:{color}">{pct:.1f} %</div>
         <div class="zbar-track">
             <div class="zbar-fill" style="width:{bar_pct:.1f}%;background:{color};"></div>
             <div style="position:absolute;top:0;left:25%;width:1px;height:100%;background:#ffffff22;"></div>
         </div>
-        <div class="zbar-labels"><span>0 %</span><span style="color:{color}">{label}</span><span>≥ 20 %</span></div>
+        <div class="zbar-labels"><span>0 %</span><span style="color:{color}">{label}</span><span>≥ 10 %</span></div>
     </div>
     """
 
 
-# ─── Presets & mapování velikosti buněk ──────────────────────────────────────
+# Velikost buněk na snímku
 
 CELL_SIZE_MAP = {
-    "Malé  (~20 px)":    51,
-    "Střední (~35 px)":  91,   # výchozí
-    "Velké  (~55 px)":  121,
+    "Malé  (~20 px)": 51,
+    "Střední (~35 px)": 91,
+    "Velké  (~55 px)": 121,
+}
+
+# Mapování lidsky čitelného filtru závažnosti na interní conf_min hodnotu
+FILTER_ZAVAZNOST_MAP = {
+    "Vše (i slabé nálezy)":  0,
+    "Střední a kritické":     1,
+    "Pouze kritické":         3,
 }
 
 PRESETS = {
@@ -375,63 +392,65 @@ PRESETS = {
                       min_area=10, max_area=2000, max_aspect=4.0, conf_min=0),
 }
 
+# Zpětné mapování conf_min → label pro radio button
+CONF_TO_FILTER = {v: k for k, v in FILTER_ZAVAZNOST_MAP.items()}
+
 def apply_preset(name: str):
     for k, v in PRESETS[name].items():
         st.session_state[f"sl_{k}"] = v
-    # Synchronizuj radio button velikosti buněk
     window_to_cell = {v: k for k, v in CELL_SIZE_MAP.items()}
     zw = PRESETS[name]["z_window"]
     if zw in window_to_cell:
         st.session_state["cell_size"] = window_to_cell[zw]
+    # Synchronizuj radio button závažnosti
+    cm = PRESETS[name]["conf_min"]
+    st.session_state["filter_zavaznost"] = CONF_TO_FILTER.get(cm, "Střední a kritické")
 
 
-# ════════════════════════════════════════════════════════════════════════════════
-#  SIDEBAR
-# ════════════════════════════════════════════════════════════════════════════════
+
+#  Sidebar
 
 with st.sidebar:
     st.markdown("## FV Hotspot Detektor")
     st.markdown("---")
 
-    uploaded = st.file_uploader("Nahraj snímek",
+    uploaded = st.file_uploader("Nahrát snímek",
                                  type=["jpg","jpeg","png","bmp","tif"])
     st.markdown("---")
 
-    # ── Rychlé předvolby ────────────────────────────────────────────────────
+    # Rychlé předvolby
     st.markdown('<div class="sec-hdr">Rychlé předvolby</div>', unsafe_allow_html=True)
     st.caption("Kliknutím se nastaví předvolené parametry")
     p1, p2 = st.columns(2)
     p3, p4 = st.columns(2)
-    if p1.button("Standardní",  use_container_width=True,
-                 help="Výchozí bod pro většinu snímků"):
+    if p1.button("Standardní",  use_container_width=True):
         apply_preset("standard")
-    if p2.button("Přísnější",   use_container_width=True,
-                 help="Méně false positives, jen výrazné hotspoty"):
+    if p2.button("Přísnější",   use_container_width=True):
         apply_preset("strict")
-    if p3.button("Citlivější",  use_container_width=True,
-                 help="Více detekcí – vhodné pro slabé hotspoty"):
+    if p3.button("Citlivější",  use_container_width=True):
         apply_preset("sensitive")
-    if p4.button("Velké panely", use_container_width=True,
-                 help="Pro snímky s velkými panely / malým rozlišením"):
+    if p4.button("Velké panely", use_container_width=True):
         apply_preset("large")
 
     st.markdown("---")
 
-    # ── Přísnost detekce ────────────────────────────────────────────────────
-    st.markdown('<div class="sec-hdr">Přísnost detekce</div>', unsafe_allow_html=True)
+    # Nastavení detekce
+    st.markdown('<div class="sec-hdr">Nastavení detekce</div>', unsafe_allow_html=True)
     z_thresh = st.slider(
-        "Z-skóre práh", 1.0, 8.0, 3.2, 0.1, key="sl_z_thresh",
-        help="Nízký (< 2.5): více detekcí, riziko false positives.\n"
-             "Vysoký (> 4.0): jen výrazné hotspoty.\n"
-             "Doporučeno: 3.0–3.5")
+        "Z-skóre práh", 1.0, 8.0, 3.2, 0.1, key="sl_z_thresh")
 
-    conf_min = st.slider(
-        "Min. spolehlivost (0–5)", 0, 4, 1, key="sl_conf_min",
-        help="0 = zobraz vše\n"
-             "+1 za Z ≥ 1.5× práh, +1 za Z ≥ 2.5×, +1 za Z ≥ 4×\n"
-             "+1 za plochu 10–500 px², +1 za kulatý tvar")
+    # Filtr závažnosti – nahrazuje neintuitivní "Min. spolehlivost (0–5)"
+    st.caption("Zobrazovat hotspoty")
+    filter_label = st.radio(
+        "Zobrazovat hotspoty",
+        options=list(FILTER_ZAVAZNOST_MAP.keys()),
+        index=1,
+        key="filter_zavaznost",
+        label_visibility="collapsed",
+    )
+    conf_min = FILTER_ZAVAZNOST_MAP[filter_label]
 
-    # ── Velikost buněk → z_window ────────────────────────────────────────────
+    # Velikost buněk
     st.markdown('<div class="sec-hdr">Velikost buněk na snímku</div>', unsafe_allow_html=True)
     st.caption("Určuje velikost detekčního okna Z-skóre")
     cell_size_label = st.radio(
@@ -439,40 +458,28 @@ with st.sidebar:
         options=list(CELL_SIZE_MAP.keys()),
         index=1,
         key="cell_size",
-        label_visibility="collapsed",
-        help="Malé buňky: okno 51 px\nStřední: 91 px\nVelké: 121 px\n"
-             "Pravidlo: okno ≈ 2–3× průměr buňky v pixelech")
+        label_visibility="collapsed")
     z_window = CELL_SIZE_MAP[cell_size_label]
 
-    # ── Rozměry hotspotu ─────────────────────────────────────────────────────
+    # Rozměry hotspotu
     st.markdown('<div class="sec-hdr">Rozměry hotspotu</div>', unsafe_allow_html=True)
-    min_area   = st.slider("Min. plocha [px²]",  5,    200,   15,  5,   key="sl_min_area",
-        help="Odstraní šumové body. Hotspot typicky > 15 px².")
-    max_area   = st.slider("Max. plocha [px²]",  100, 10000,  800, 100, key="sl_max_area",
-        help="Skutečný hotspot = 1–3 buňky, typicky < 800 px².\nVelké oblasti jsou rámy nebo kabely.")
-    max_aspect = st.slider("Max. poměr stran",   1.5,  10.0,  3.5, 0.5, key="sl_max_aspect",
-        help="Protáhlé tvary (kabely, rámy) se odfiltrují.")
+    min_area   = st.slider("Min. plocha [px²]",  5,    200,   15,  5,   key="sl_min_area")
+    max_area   = st.slider("Max. plocha [px²]",  100, 3500,  800, 100, key="sl_max_area")
+    max_aspect = st.slider("Max. poměr stran",   1.5,  10.0,  3.5, 0.5, key="sl_max_aspect")
 
     st.markdown("---")
 
-    # ── Pokročilé (skryté) ───────────────────────────────────────────────────
-    with st.expander("⚙ Pokročilé nastavení"):
-        st.caption("Parametry pro expertní ladění – standardně není třeba měnit.")
-        blur_k     = st.slider("Gaussovské rozmazání [px]",   0, 15, 7, 2, key="sl_blur_k",
-            help="Potlačí texturu buněk před výpočtem Z-skóre. Doporučeno: 7.")
-        morph_k    = st.slider("Morfologické otevření [px]",  0, 11, 5, 2, key="sl_morph_k",
-            help="Odstraní izolované pixely ze Z-masky. 0 = vypnuto.")
-        merge_dist = st.slider("Sloučení fragmentů [px]",     0, 40, 15, 5, key="sl_merge_dist",
-            help="Fragmenty blíže než X px se sloučí v jeden hotspot.")
-        st.caption(f"Z-skóre okno: **{z_window} px** (řízeno výběrem velikosti buněk výše)")
+    # Pokročilé nastavení
+    with st.expander("Pokročilé nastavení"):
+        blur_k     = st.slider("Gaussovské rozmazání [px]",   0, 15, 7, 2, key="sl_blur_k")
+        morph_k    = st.slider("Morfologické otevření [px]",  0, 11, 5, 2, key="sl_morph_k")
+        merge_dist = st.slider("Sloučení fragmentů [px]",     0, 40, 15, 5, key="sl_merge_dist")
 
     st.markdown("---")
-    show_debug = st.toggle("Zobrazit debug panel", value=False)
+    show_debug = st.toggle("Zobrazit debug panel", value=True)
 
 
-# ════════════════════════════════════════════════════════════════════════════════
-#  HLAVNÍ OBSAH
-# ════════════════════════════════════════════════════════════════════════════════
+#  Hlavní funkční část
 
 st.title("FV Hotspot Detektor")
 
@@ -491,28 +498,28 @@ img_bytes = uploaded.getvalue()
 
 @st.cache_data(show_spinner=False)
 def cached(img_bytes, params):
-    return detekuj(img_bytes, params)
+    return detekce(img_bytes, params)
 
 with st.spinner("Počítám Z-skóre mapu..."):
     img, gray, zmap, maska, merged, hotspoty = cached(img_bytes, params)
 
 annotated = anotuj(img, hotspoty, z_thresh, z_window)
 
-# ── Počítání metrik ───────────────────────────────────────────────────────────
-n_h = sum(1 for h in hotspoty if h.confidence >= 3)
-n_m = sum(1 for h in hotspoty if 1 <= h.confidence < 3)
-n_l = sum(1 for h in hotspoty if h.confidence == 0)
+# Počítání metrik
+n_krit = sum(1 for h in hotspoty if h.confidence >= 3)
+n_str  = sum(1 for h in hotspoty if 1 <= h.confidence < 3)
+n_slab = sum(1 for h in hotspoty if h.confidence == 0)
 max_z_val = round(float(max([h.max_z for h in hotspoty])), 2) if hotspoty else 0.0
 zmap_max  = float(zmap.max())
 px_total  = maska.size
 px_active = int((maska > 0).sum())
 pct       = 100 * px_active / px_total
 
-# ── Řada 1: počty hotspotů ────────────────────────────────────────────────────
+# Počty hotspotů – bez C skóre, jen lidsky čitelné kategorie
 cols = st.columns(4)
 for col, val, lbl in zip(cols,
-    [len(hotspoty), n_h, n_m, n_l],
-    ["Celkem hotspotů", "Silné  (C ≥ 3)", "Střední  (C 1–2)", "Slabé  (C 0)"]):
+    [len(hotspoty), n_krit, n_str, n_slab],
+    ["Celkem hotspotů", "Kritické", "Střední", "Slabé"]):
     col.markdown(
         f'<div class="metric-box"><div class="val">{val}</div>'
         f'<div class="lbl">{lbl}</div></div>',
@@ -520,7 +527,7 @@ for col, val, lbl in zip(cols,
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# ── Řada 2: Z-skóre gauge + maska status ─────────────────────────────────────
+# Z-skóre + pokrytí detekční masky bar
 gc1, gc2 = st.columns(2)
 with gc1:
     st.markdown(z_gauge_html(max_z_val, z_thresh, zmap_max), unsafe_allow_html=True)
@@ -529,7 +536,7 @@ with gc2:
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# ── Hlavní obrázky ────────────────────────────────────────────────────────────
+# Hlavní obrázky
 c1, c2, c3 = st.columns(3)
 with c1:
     st.markdown("**Originální snímek**")
@@ -541,7 +548,7 @@ with c3:
     st.markdown("**Anotovaný výsledek**")
     st.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), use_container_width=True)
 
-# ── Debug panel ───────────────────────────────────────────────────────────────
+# Debug panel
 if show_debug:
     st.markdown("---")
     st.markdown("### Debug")
@@ -549,30 +556,28 @@ if show_debug:
     st.image(fig_to_bytes(fig), use_container_width=True)
 
     col_d1, col_d2, col_d3, col_d4 = st.columns(4)
-    col_d1.metric("Aktivní px v masce",   f"{px_active:,}", f"{pct:.1f} % snímku")
+    col_d1.metric("Aktivní px v masce",   f"{px_active:,}")
     col_d2.metric("Max Z v celém snímku", f"{zmap_max:.2f}")
     col_d3.metric("Z práh",               f"{z_thresh}")
     col_d4.metric("Z okno",               f"{z_window} px")
 
 st.markdown("---")
 
-# ── Tabulka hotspotů ──────────────────────────────────────────────────────────
+# Tabulka hotspotů – bez C skóre, jen Závažnost
 st.markdown(f"### Nalezené hotspoty: `{len(hotspoty)}`")
 if hotspoty:
     rows = []
     for h in hotspoty:
-        badge = "C3+" if h.confidence >= 3 else ("C1-2" if h.confidence >= 1 else "C0")
         rows.append({
-            "ID":             h.id,
-            "Skóre":          f"{badge}  (C{h.confidence})",
-            "Max Z":          h.max_z,
-            "Mean Z":         h.mean_z,
-            "Max jas":        h.max_intensity,
-            "Plocha [px²]":   h.area,
-            "Poměr stran":    h.aspect_ratio,
-            "Kruhovitost":    h.circularity,
-            "Souřadnice X,Y": f"{h.x},{h.y}",
-            "Šířka × Výška":  f"{h.w}×{h.h}",
+            "ID":               h.id,
+            "Závažnost":        h.zavaznost,
+            "Max Z":            h.max_z,
+            "Mean Z":           h.mean_z,
+            "Max jas":          h.max_intensity,
+            "Plocha [px²]":     h.area,
+            "Poměr stran":      h.aspect_ratio,
+            "Souřadnice x a y": f"{h.x} a {h.y}",
+            "Šířka × Výška":    f"{h.w}×{h.h}",
         })
     df = pd.DataFrame(rows)
     st.dataframe(df, use_container_width=True,
@@ -582,25 +587,25 @@ else:
 
 st.markdown("---")
 
-# ── Export ────────────────────────────────────────────────────────────────────
+# Export
 st.markdown("### Export")
 fname = uploaded.name.rsplit(".", 1)[0]
 e1, e2, e3 = st.columns(3)
 
 _, png_enc = cv2.imencode(".png", annotated)
 with e1:
-    st.download_button("⬇ Anotovaný PNG",
+    st.download_button("Anotovaný PNG",
         data=png_enc.tobytes(), file_name=f"{fname}_hotspoty.png",
         mime="image/png", use_container_width=True)
 if hotspoty:
     with e2:
-        st.download_button("⬇ CSV – hotspoty",
+        st.download_button("CSV – hotspoty",
             data=df.to_csv(index=False).encode("utf-8-sig"),
             file_name=f"{fname}_hotspoty.csv",
             mime="text/csv", use_container_width=True)
 
 fig_exp = render_panels(img, annotated, zmap, maska, merged)
 with e3:
-    st.download_button("⬇ Debug graf PNG",
+    st.download_button("Debug graf PNG",
         data=fig_to_bytes(fig_exp), file_name=f"{fname}_debug.png",
         mime="image/png", use_container_width=True)
