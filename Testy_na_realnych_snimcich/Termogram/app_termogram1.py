@@ -257,7 +257,7 @@ def anotuj(img, hotspoty, z_thresh, z_window):
         x2 = min(img.shape[1]-1, hs.x+hs.w+5)
         y2 = min(img.shape[0]-1, hs.y+hs.h+5)
         cv2.rectangle(out, (x1,y1), (x2,y2), b, 2)
-        lbl = f"#{hs.id} Z{hs.max_z:.1f}"
+        lbl = f"#{hs.id}"
         cv2.putText(out, lbl, (x1, y1-4), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0,0,0), 2, cv2.LINE_AA)
         cv2.putText(out, lbl, (x1, y1-4), cv2.FONT_HERSHEY_SIMPLEX, 0.4, b, 1, cv2.LINE_AA)
     for i, line in enumerate([f"Hotspoty: {len(hotspoty)}"]):
@@ -554,7 +554,7 @@ if show_debug:
 
 st.markdown("---")
 
-# Tabulka hotspotů – bez C skóre, jen Závažnost
+# Tabulka hotspotů
 st.markdown(f"### Nalezené hotspoty: `{len(hotspoty)}`")
 if hotspoty:
     rows = []
