@@ -255,6 +255,7 @@ def render_panels(img, annotated, zmap, maska, merged):
     return fig
 
 
+
 #  Sidebar
 
 PRESETS = {
