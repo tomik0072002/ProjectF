@@ -1,10 +1,3 @@
-"""
-╔══════════════════════════════════════════════════════════════╗
-║           ANALÝZA ČÁSTIC - particle_analysis.py              ║
-║  Nastavení skriptu: upravte proměnné v sekci KONFIGURACE     ║
-╚══════════════════════════════════════════════════════════════╝
-"""
-
 import cv2
 import numpy as np
 import pandas as pd
@@ -169,7 +162,7 @@ def save_annotated_figure(img: np.ndarray,
                           out_path: str,
                           unit: str):
 
-    fig, axes = plt.subplots(1, 3, figsize=(22, 7))
+    fig, axes = plt.subplots(1, 2, figsize=(15, 7))
     fig.suptitle(f"Analýza částic – {filename}", fontsize=13, fontweight='bold')
 
     # Anotovaný snímek
@@ -201,28 +194,6 @@ def save_annotated_figure(img: np.ndarray,
     else:
         axes[1].text(0.5, 0.5, "Žádné částice nenalezeny",
                      ha='center', va='center', fontsize=12)
-
-
-    # Histogram ekvivalentních průměrů
-    axes[2].axis('on')
-    if not df.empty:
-        col = f"Ekv. průměr ({unit})"
-        if col in df.columns:
-            axes[2].hist(df[col], bins=min(20, len(df)),
-                         color='steelblue', edgecolor='white', linewidth=0.5)
-            axes[2].set_xlabel(f"Ekvivalentní průměr ({unit})")
-            axes[2].set_ylabel("Počet částic")
-            axes[2].set_title("Distribuce velikostí")
-            # Statistiky do titulku
-            med = df[col].median()
-            avg = df[col].mean()
-            axes[2].axvline(avg, color='red',    linestyle='--', linewidth=1.2,
-                            label=f'Průměr = {avg:.3f}')
-            axes[2].axvline(med, color='orange', linestyle=':',  linewidth=1.2,
-                            label=f'Medián = {med:.3f}')
-            axes[2].legend(fontsize=8)
-    else:
-        axes[2].text(0.5, 0.5, "Žádná data", ha='center', va='center')
 
     plt.tight_layout()
     plt.savefig(out_path, dpi=150, bbox_inches='tight')
@@ -316,7 +287,7 @@ def process_all_images(input_folder: str,
                 summary_row[f"{col} – std"]    = round(df[col].std(), 4)
             all_results.append(summary_row)
 
-        # Uložení anotovaného obrázku + tabulky + histogramu
+        # Uložení anotovaného obrázku + tabulky
         base_name = os.path.splitext(filename)[0]
         fig_path  = os.path.join(output_folder, f"{base_name}_analyza.png")
         save_annotated_figure(img, annotated, df, filename, fig_path, u)
