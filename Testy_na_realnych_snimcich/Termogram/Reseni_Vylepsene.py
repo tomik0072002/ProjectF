@@ -1,19 +1,3 @@
-"""
-╔══════════════════════════════════════════════════════════════╗
-║     DETEKCE HOTSPOTŮ – Termogramy FV panelů  v5             ║
-║  Nastavení: upravte proměnné v sekci KONFIGURACE             ║
-╚══════════════════════════════════════════════════════════════╝
-
-Přístup: výhradně lokální Z-skóre.
-  1. Gaussian blur pro potlačení šumu
-  2. Lokální Z-skóre = (pixel − lokální průměr) / lokální std
-  3. Maska: Z >= ZSCORE_THRESH
-  4. Morfologické čištění masky (eroze drobných artefaktů)
-  5. Slučování fragmentů
-  6. Extrakce kontur + filtrování geometrií
-  7. Skóre závažnosti (Slabý / Střední / Kritický)
-"""
-
 import cv2
 import numpy as np
 import os
@@ -26,46 +10,37 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import matplotlib.patches as mpatches
 
-# ─────────────────────────────────────────────────────────────
-#  KONFIGURACE
-# ─────────────────────────────────────────────────────────────
+#  Konfigurace
 
 INPUT_FOLDER  = '.'
 OUTPUT_FOLDER = 'Výsledky_vylepšeno'
 
 # Předzpracování
-PRE_BLUR      = 7         # Gaussian blur před Z-skóre [px, liché]
-                          # Potlačí šum a JPEG artefakty. 0 = vypnuto.
+PRE_BLUR      = 7         # Gaussovský blur před Z-skóre [px, liché]
 
 # Z-skóre
 Z_WINDOW      = 91        # Velikost okna pro lokální průměr/std [px, liché]
-                          # Příliš malé → zachytí texturu buněk
-                          # Příliš velké → nezachytí hotspoty blízko u sebe
-Z_THRESH      = 3.2       # Minimální Z pro hotspot (typicky 2.0–4.0)
-                          # Snižte pokud hotspoty chybí, zvyšte při false positives
+
+Z_THRESH      = 3.0       # Minimální Z pro hotspot
 
 # Čištění masky
-MORPH_OPEN_K  = 5         # Kernel eroze/otevření masky [px] – odstraní drobné body
-                          # 0 = vypnuto, 3–5 doporučeno
+MORPH_OPEN_K  = 5         # Kernel eroze/otevření masky [px]
 
 # Sloučení fragmentů
-MERGE_DIST    = 15        # Sloučení fragmentů [px], 0 = vypnuto
+MERGE_DIST    = 15        # Sloučení fragmentů [px]
 
 # Filtrování kontur
 HS_MIN_AREA   = 15        # Min. plocha hotspotu [px²]
 HS_MAX_AREA   = 800       # Max. plocha hotspotu [px²]
-HS_MAX_ASPECT = 3.5       # Max. poměr stran (protáhlé = kabel/artefakt)
+HS_MAX_ASPECT = 3.5       # Max. poměr stran
 
 # Filtr závažnosti
-# "vse"      → zobrazit vše včetně slabých (conf_min = 0)
-# "stredni"  → střední a kritické         (conf_min = 1)
-# "kriticke" → pouze kritické             (conf_min = 3)
-FILTER_ZAVAZNOST = "stredni"
+# "vse"     zobrazit vše včetně slabých
+# "stredni"   střední a kritické
+# "kriticke"  pouze kritické
+FILTER_ZAVAZNOST = "vse"
 
-# Rychlé předvolby – přepište FILTER_PRESET na jméno předvolby,
-# nebo nechte "" pro ruční nastavení výše.
-# Dostupné předvolby: "standard", "sensitive", "strict"
-FILTER_PRESET = ""
+FILTER_PRESET = "sensitive"
 
 # Výstup
 SHOW_WINDOW   = False     # Zobrazit CV2 okno s porovnáním
@@ -75,9 +50,7 @@ SAVE_CSV      = True      # Uložit CSV souhrn
 SAVE_DEBUG    = True      # Uložit debug graf (4 panely)
 DPI           = 200
 
-# ─────────────────────────────────────────────────────────────
-#  PŘEDVOLBY (přepisují konfiguraci výše)
-# ─────────────────────────────────────────────────────────────
+#  Předvolby nastavení
 
 PRESETS = {
     "standard":  dict(blur_k=7,  z_window=91,  z_thresh=3.2, morph_k=5,
@@ -97,9 +70,7 @@ FILTER_ZAVAZNOST_MAP = {
     "kriticke":  3,
 }
 
-# ─────────────────────────────────────────────────────────────
-#  LOGGING
-# ─────────────────────────────────────────────────────────────
+#  Logování
 
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s  %(levelname)-8s  %(message)s',
@@ -107,9 +78,7 @@ logging.basicConfig(level=logging.INFO,
 log = logging.getLogger(__name__)
 
 
-# ─────────────────────────────────────────────────────────────
 #  DATOVÉ TŘÍDY
-# ─────────────────────────────────────────────────────────────
 
 @dataclass
 class Hotspot:
@@ -121,7 +90,7 @@ class Hotspot:
     max_z:          float
     mean_z:         float
     max_intensity:  float
-    confidence:     int   # 0–5, interní skóre
+    confidence:     int
 
     @property
     def cx(self): return self.x + self.w // 2
@@ -131,7 +100,6 @@ class Hotspot:
 
     @property
     def zavaznost(self) -> str:
-        """Lidsky čitelná závažnost odvozená z confidence skóre."""
         if self.confidence >= 3: return "Kritický"
         if self.confidence >= 1: return "Střední"
         return "Slabý"
@@ -144,7 +112,6 @@ class Hotspot:
 
     @property
     def zavaznost_bgr(self) -> tuple:
-        """BGR barva pro OpenCV anotaci."""
         if self.confidence >= 3: return (0,   50, 239)   # červená
         if self.confidence >= 1: return (0,  115, 249)   # oranžová
         return (0, 163, 234)                              # žlutá
@@ -163,9 +130,7 @@ class Vysledek:
     mask_pct:   float = 0.0
 
 
-# ─────────────────────────────────────────────────────────────
-#  PIPELINE
-# ─────────────────────────────────────────────────────────────
+#  Pipeline
 
 def priprav(img: np.ndarray, blur_k: int) -> np.ndarray:
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32)
@@ -176,15 +141,6 @@ def priprav(img: np.ndarray, blur_k: int) -> np.ndarray:
 
 
 def zscore_mapa(gray: np.ndarray, window: int) -> np.ndarray:
-    """
-    Lokální Z-skóre pro každý pixel.
-
-    Místo globálního prahu porovnáváme každý pixel se svým okolím
-    definovaným klouzavým oknem. Výsledek je invariantní vůči:
-      - absolutní teplotní úrovni snímku
-      - teplotním gradientům přes celé pole
-      - různému nastavení pseudobarev termokamery
-    """
     k     = window | 1
     mu    = cv2.boxFilter(gray, -1, (k, k))
     sq_mu = cv2.boxFilter(gray ** 2, -1, (k, k))
@@ -193,7 +149,6 @@ def zscore_mapa(gray: np.ndarray, window: int) -> np.ndarray:
 
 
 def sestav_masku(zmap: np.ndarray, thresh: float, morph_k: int) -> np.ndarray:
-    """Z-skóre → binární maska → morfologické čištění."""
     maska = (zmap >= thresh).astype(np.uint8) * 255
     if morph_k >= 3:
         k     = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
@@ -203,7 +158,6 @@ def sestav_masku(zmap: np.ndarray, thresh: float, morph_k: int) -> np.ndarray:
 
 
 def sluc(maska: np.ndarray, dist: int) -> np.ndarray:
-    """Sloučí blízké fragmenty dilatací + erozí."""
     if dist <= 0:
         return maska
     k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dist | 1, dist | 1))
@@ -212,14 +166,6 @@ def sluc(maska: np.ndarray, dist: int) -> np.ndarray:
 
 def spocti_confidence(max_z: float, area: float,
                       circ: float, thresh: float) -> int:
-    """
-    Skóre 0–5:
-      +1  Z ≥ thresh × 1.5   (výrazný hotspot)
-      +1  Z ≥ thresh × 2.5   (velmi silný hotspot)
-      +1  Z ≥ thresh × 4.0   (extrémní teplotní anomálie)
-      +1  plocha v rozumném rozsahu (10–500 px²)
-      +1  kompaktní tvar (kruhovitost > 0.4)
-    """
     s = 0
     if max_z >= thresh * 1.5: s += 1
     if max_z >= thresh * 2.5: s += 1
@@ -240,10 +186,7 @@ def detekuj(img: np.ndarray,
             merge_dist:  int   = MERGE_DIST,
             conf_min:    int   = 0,
             ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, List[Hotspot]]:
-    """
-    Kompletní detekční pipeline.
-    Vrací (zmap, maska, merged_maska, hotspoty).
-    """
+
     gray   = priprav(img, pre_blur)
     zmap   = zscore_mapa(gray, z_window)
     maska  = sestav_masku(zmap, z_thresh, morph_open)
@@ -297,17 +240,14 @@ def detekuj(img: np.ndarray,
     return zmap, maska, merged, hotspoty
 
 
-# ─────────────────────────────────────────────────────────────
-#  METRIKY
-# ─────────────────────────────────────────────────────────────
+
+#  Metriky
 
 def mask_coverage_pct(maska: np.ndarray) -> float:
-    """Procento aktivních pixelů v detekční masce."""
     return 100.0 * int((maska > 0).sum()) / maska.size
 
 
 def mask_status(pct: float) -> str:
-    """Slovní hodnocení pokrytí masky (jako v aplikaci)."""
     if pct == 0:      return "Prázdná – snižte Z práh"
     if pct < 1:       return "OK"
     if pct < 5:       return "Mírně vysoké pokrytí"
@@ -316,28 +256,17 @@ def mask_status(pct: float) -> str:
 
 
 def z_status(max_z: float, z_thresh: float) -> str:
-    """Slovní hodnocení maxima Z-skóre."""
     if max_z < z_thresh:       return "Pod prahem"
     if max_z < z_thresh * 2:   return "Hotspot (slabý)"
     if max_z < z_thresh * 4:   return "Hotspot (střední)"
     return "Hotspot (kritický)"
 
 
-# ─────────────────────────────────────────────────────────────
-#  ANOTACE
-# ─────────────────────────────────────────────────────────────
+#  Anotace
 
 def anotuj(img: np.ndarray, hotspoty: List[Hotspot],
            z_thresh: float, z_window: int) -> np.ndarray:
-    """
-    Kreslí barevné obdélníky podle závažnosti:
-      Žlutá    = Slabý    (confidence 0)
-      Oranžová = Střední  (confidence 1–2)
-      Červená  = Kritický (confidence 3+)
 
-    Popisek u každého hotspotu: pouze číslo (#1, #2, …)
-    Vlevo nahoře: pouze celkový počet hotspotů.
-    """
     out = img.copy()
     pad = 5
     for hs in hotspoty:
@@ -352,7 +281,7 @@ def anotuj(img: np.ndarray, hotspoty: List[Hotspot],
         cv2.putText(out, lbl, (x1, y1 - 4),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, b, 1, cv2.LINE_AA)
 
-    # Vlevo nahoře – pouze počet hotspotů
+
     line = f"Hotspoty: {len(hotspoty)}"
     cv2.putText(out, line, (8, 24), cv2.FONT_HERSHEY_SIMPLEX,
                 0.6, (0, 0, 0), 3, cv2.LINE_AA)
@@ -361,16 +290,15 @@ def anotuj(img: np.ndarray, hotspoty: List[Hotspot],
     return out
 
 
-# ─────────────────────────────────────────────────────────────
-#  MATPLOTLIB VÝSTUP  (4-panelový debug graf)
-# ─────────────────────────────────────────────────────────────
+
+#  Matplotlib výstuo
 
 def _legenda_zavaznosti(ax):
-    """Přidá legendu závažnosti do osy."""
+
     patches = [
         mpatches.Patch(color='#ef4444', label='Kritický (C≥3)'),
-        mpatches.Patch(color='#f97316', label='Střední  (C 1–2)'),
-        mpatches.Patch(color='#eab308', label='Slabý    (C 0)'),
+        mpatches.Patch(color='#f97316', label='Střední (C 1–2)'),
+        mpatches.Patch(color='#eab308', label='Slabý (C 0)'),
     ]
     ax.legend(handles=patches, loc='upper right',
               fontsize=7, framealpha=0.7)
@@ -383,13 +311,7 @@ def vykresli(img: np.ndarray, annotated: np.ndarray,
              z_thresh: float,
              mask_pct: float,
              save_path: Optional[str] = None):
-    """
-    4-panelový debug graf:
-      1. Originální snímek
-      2. Z-skóre mapa s colorbar
-      3. Detekční maska + info o pokrytí
-      4. Anotovaný výsledek s legendou závažnosti
-    """
+
     n_krit = sum(1 for h in hotspoty if h.confidence >= 3)
     n_str  = sum(1 for h in hotspoty if 1 <= h.confidence < 3)
     n_slab = sum(1 for h in hotspoty if h.confidence == 0)
@@ -409,9 +331,9 @@ def vykresli(img: np.ndarray, annotated: np.ndarray,
     axes = [fig.add_subplot(gs[j]) for j in range(4)]
 
     panels = [
-        (cv2.cvtColor(img,       cv2.COLOR_BGR2RGB), "Originální snímek",  None),
-        (np.clip(zmap, -2, None),                    "Z-skóre mapa",       'RdYlBu_r'),
-        (maska,                                       "Detekční maska",     'gray'),
+        (cv2.cvtColor(img, cv2.COLOR_BGR2RGB), "Originální snímek",  None),
+        (np.clip(zmap, -2, None), "Z-skóre mapa", 'RdYlBu_r'),
+        (maska, "Detekční maska",     'gray'),
         (cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), "Anotovaný výsledek", None),
     ]
 
@@ -424,7 +346,7 @@ def vykresli(img: np.ndarray, annotated: np.ndarray,
             cbar = plt.colorbar(im, ax=ax, fraction=0.046,
                                 pad=0.04, shrink=0.85)
             cbar.ax.tick_params(colors='#6b7280', labelsize=7)
-            # Čára prahu
+
             cbar.ax.axhline(y=z_thresh, color='white',
                             linewidth=1.2, linestyle='--', alpha=0.8)
         if title == "Anotovaný výsledek":
@@ -447,9 +369,7 @@ def vykresli(img: np.ndarray, annotated: np.ndarray,
     plt.close(fig)
 
 
-# ─────────────────────────────────────────────────────────────
 #  CSV
-# ─────────────────────────────────────────────────────────────
 
 def uloz_csv(vysledky: List[Vysledek], folder: str):
     path = os.path.join(folder, '_hotspoty_souhrn.csv')
@@ -474,9 +394,8 @@ def uloz_csv(vysledky: List[Vysledek], folder: str):
     log.info(f"CSV: {path}")
 
 
-# ─────────────────────────────────────────────────────────────
-#  ZPRACOVÁNÍ JEDNOHO SNÍMKU
-# ─────────────────────────────────────────────────────────────
+
+#  Zpracování snímků
 
 def zpracuj(cesta: str, output_folder: str,
             pre_blur: int, z_window: int, z_thresh: float,
@@ -535,7 +454,7 @@ def zpracuj(cesta: str, output_folder: str,
         cv2.imwrite(out_png, annotated)
         log.info(f"  PNG: {out_png}")
 
-    debug_path = (os.path.join(output_folder, f"debug_{nazev}.png")
+    debug_path = (os.path.join(output_folder, f"vysledek_{nazev}.png")
                   if SAVE_DEBUG else None)
     if SHOW_PLOT or SAVE_DEBUG:
         vykresli(img, annotated, zmap, maska, hotspoty,
@@ -552,12 +471,10 @@ def zpracuj(cesta: str, output_folder: str,
     return v
 
 
-# ─────────────────────────────────────────────────────────────
-#  HLAVNÍ SMYČKA
-# ─────────────────────────────────────────────────────────────
+# Hlavní smyčka
 
 def main():
-    # ── Načtení předvolby (pokud je nastavena) ──────────────
+    # Načtení předvolby
     global PRE_BLUR, Z_WINDOW, Z_THRESH, MORPH_OPEN_K, MERGE_DIST
     global HS_MIN_AREA, HS_MAX_AREA, HS_MAX_ASPECT, FILTER_ZAVAZNOST
 
@@ -625,7 +542,7 @@ def main():
     if SAVE_CSV and vysledky:
         uloz_csv(vysledky, OUTPUT_FOLDER)
 
-    # ── Souhrnný report ──────────────────────────────────────
+    # Report
     celkem    = sum(v.n_hotspotu for v in vysledky)
     krit_tot  = sum(v.n_krit    for v in vysledky)
     str_tot   = sum(v.n_str     for v in vysledky)
