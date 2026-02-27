@@ -314,7 +314,7 @@ with st.sidebar:
     show_table = st.toggle("Zobrazit tabulku dat", value=True)
     show_histograms = st.toggle("Zobrazit histogramy", value=True)
     highlight_max = st.toggle("Zvýraznit maxima v tabulce", value=True)
-    show_debug = st.toggle(" Mezikroky výsledné masky", value=False)
+    show_debug = st.toggle(" Mezikroky výsledné masky", value=True)
 
 
 #  Hlavní obsah aplikace
@@ -415,7 +415,7 @@ st.markdown("---")
 
 # Mezikroky výsledné masky
 if show_debug:
-    st.markdown("###  Mezikroky zpracování masky")
+    st.markdown("###  Mezikroky vytvoření výsledné masky")
     gray_img   = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     blurred    = cv2.GaussianBlur(gray_img, (5, 5), 0)
     canny_dbg  = cv2.Canny(blurred, used_t1, used_t2)
@@ -426,10 +426,10 @@ if show_debug:
 
     d1, d2, d3, d4 = st.columns(4)
     with d1:
-        st.markdown(f"**1. Canny hrany** `T1={used_t1} T2={used_t2}`")
+        st.markdown(f"**1. Canny hrany**")
         st.image(canny_dbg, clamp=True, use_container_width=True)
     with d2:
-        st.markdown(f"**2. Po dilataci** `kernel={params['dilate_kernel']} iter={params['dilate_iter']}`")
+        st.markdown(f"**2. Po dilataci**")
         st.image(dilated, clamp=True, use_container_width=True)
     with d3:
         st.markdown("**3. Otsu maska**")
