@@ -378,7 +378,7 @@ with st.sidebar:
     laser_axis = st.selectbox(
         "Osa laseru",
         options=[0, 1],
-        format_func=lambda x: "0 – Horizontálně (po řádcích)" if x == 0 else "1 – Vertikálně (po sloupcích)"
+        format_func=lambda x: "0 – Horizontálně" if x == 0 else "1 – Vertikálně"
     )
     channel = st.selectbox(
         "Kanál signálu",
@@ -441,12 +441,11 @@ if run_btn:
     if not fp.exists():
         st.error(f"Soubor nenalezen: `{file_path}`")
     else:
-        # ── Čisté načítání ze souboru (jako v původním funkčním skriptu)
+        # ── Čisté načítání ze souboru
         with st.spinner("Načítám data..."):
             try:
                 snimky = np.load(str(fp), allow_pickle=True)
 
-                # Pokud to načetlo objektové pole, zkusíme ho rozbalit
                 if snimky.dtype == object:
                     if snimky.ndim == 0:
                         inner = snimky.item()
