@@ -315,7 +315,36 @@ def main():
         return
 
     log.info(f"Načítám: {input_file}")
-    snimky = np.load(input_file)
+    # allow_pickle=True pro případ object array (seznam snímků)
+    snimky = np.load(input_file, allow_pickle=True)
+    log.info(f"Raw shape po načtení: {snimky.shape}  |  dtype: {snimky.dtype}")
+
+    # Případ 1: object array (pickle list snímků) → rozbalíme
+    if snimky.dtype == object:
+        snimky = np.stack(snimky.tolist(), axis=0)
+        log.info(f"Rozbaleno z object array → shape: {snimky.shape}")
+
+    # Případ 2: 1D flat pole → nelze automaticky reshapovat
+    if snimky.ndim == 1:
+        log.error(
+            f"Pole je 1D (size={snimky.size}). Neznámý formát – "
+            f"zkontroluj, jak byl soubor uložen (np.save vs np.savez)."
+        )
+        return
+
+    # Případ 3: 2D pole → jeden snímek, zabalíme do (1, H, W)
+    if snimky.ndim == 2:
+        log.warning(f"Pole je 2D {snimky.shape} – interpretováno jako jeden snímek.")
+        snimky = snimky[np.newaxis, ...]
+
+    # Případ 4: 3D pole (N, H, W) nebo (N, H, W*C) – standardní případ
+    if snimky.ndim == 3:
+        # Pokud poslední dimenze odpovídá počtu kanálů (3 nebo 4), přeskupíme
+        if snimky.shape[-1] in (3, 4):
+            log.info(f"3D pole s {snimky.shape[-1]} kanály – OK")
+        else:
+            log.info(f"3D pole {snimky.shape} – grayscale stack")
+
     log.info(f"Načteno {len(snimky)} snímků  |  "
              f"shape: {snimky.shape}  |  dtype: {snimky.dtype}")
 

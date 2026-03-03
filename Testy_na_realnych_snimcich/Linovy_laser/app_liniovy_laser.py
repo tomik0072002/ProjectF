@@ -1,10 +1,3 @@
-"""
-╔══════════════════════════════════════════════════════════════╗
-║         LINIOVÝ LASER – Streamlit aplikace                   ║
-╚══════════════════════════════════════════════════════════════╝
-Spuštění: streamlit run laser_scan_app.py
-"""
-
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
@@ -16,20 +9,15 @@ import streamlit as st
 import io
 import time
 
-# ─────────────────────────────────────────────────────────────
-#  STRÁNKA – konfigurace
-# ─────────────────────────────────────────────────────────────
+#  Konfigurace stránky
 
 st.set_page_config(
     page_title="Liniový laser – analýza skenu",
-    page_icon="🔴",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# ─────────────────────────────────────────────────────────────
-#  CSS – vizuální styl
-# ─────────────────────────────────────────────────────────────
+#  Vzhled stránky
 
 st.markdown("""
 <style>
@@ -173,9 +161,7 @@ div[data-testid="stDownloadButton"] button {
 """, unsafe_allow_html=True)
 
 
-# ─────────────────────────────────────────────────────────────
-#  FUNKCE PRO ZPRACOVÁNÍ OBRAZU A LASERU
-# ─────────────────────────────────────────────────────────────
+#  Funkce pro zpracování obrazu
 
 def extract_laser_signal(img: np.ndarray, channel: str = 'GRAY') -> np.ndarray:
     if img.ndim == 2:
@@ -291,14 +277,14 @@ def process_laser_scan(snimky_3d, params, progress_bar=None, status_text=None):
 
     nonzero = depth_map[depth_map != 0]
     stats = {
-        "n_snimku":       n,
-        "shape":          depth_map.shape,
+        "n_snimku": n,
+        "shape": depth_map.shape,
         "validnich_bodu": int(nonzero.size),
-        "pokryti_pct":    round(100 * nonzero.size / depth_map.size, 1),
-        "min":            round(float(nonzero.min()),  2) if nonzero.size else 0,
-        "max":            round(float(nonzero.max()),  2) if nonzero.size else 0,
-        "mean":           round(float(nonzero.mean()), 2) if nonzero.size else 0,
-        "std":            round(float(nonzero.std()),  2) if nonzero.size else 0,
+        "pokryti_pct": round(100 * nonzero.size / depth_map.size, 1),
+        "min": round(float(nonzero.min()),  2) if nonzero.size else 0,
+        "max": round(float(nonzero.max()),  2) if nonzero.size else 0,
+        "mean": round(float(nonzero.mean()), 2) if nonzero.size else 0,
+        "std": round(float(nonzero.std()),  2) if nonzero.size else 0,
     }
 
     return depth_map, stats
@@ -318,7 +304,7 @@ def create_figure(depth_map, stats, file_name, colormap):
     ax1 = fig.add_subplot(gs[0, :], **ax_style)
     im = ax1.imshow(depth_map, cmap=colormap, interpolation='nearest',
                     aspect='auto', origin='lower')
-    ax1.set_title("Depth mapa (celý sken)", fontsize=11, color='#ccccdd', pad=8)
+    ax1.set_title("Depth mapa", fontsize=11, color='#ccccdd', pad=8)
     ax1.set_ylabel("Pozice na senzoru [px]", fontsize=10, color='#888899')
     ax1.tick_params(colors='#555566')
     for spine in ax1.spines.values():
@@ -357,11 +343,11 @@ def create_figure(depth_map, stats, file_name, colormap):
         ax3.axvline(stats['mean'], color='#ffaa44', lw=1.5, ls='--',
                     label=f"Průměr = {stats['mean']}")
         ax3.axvline(stats['mean'] - stats['std'], color='#44cc88',
-                    lw=1.0, ls=':', label=f"±std = {stats['std']}")
+                    lw=1.0, ls=':', label=f"±směrodatná odchylka = {stats['std']}")
         ax3.axvline(stats['mean'] + stats['std'], color='#44cc88', lw=1.0, ls=':')
         ax3.legend(fontsize=9, facecolor='#16161c', edgecolor='#2a2a35',
                    labelcolor='#ccccdd')
-    ax3.set_title("Histogram hodnot depth mapy", fontsize=11, color='#ccccdd', pad=8)
+    ax3.set_title("Histogram hodnot", fontsize=11, color='#ccccdd', pad=8)
     ax3.set_xlabel("Hodnota [px]", fontsize=10, color='#888899')
     ax3.set_ylabel("Počet bodů", fontsize=10, color='#888899')
     ax3.tick_params(colors='#555566')
@@ -373,25 +359,22 @@ def create_figure(depth_map, stats, file_name, colormap):
     return fig
 
 
-# ─────────────────────────────────────────────────────────────
-#  UI – SIDEBAR
-# ─────────────────────────────────────────────────────────────
+#  Sidebar
 
 with st.sidebar:
-    st.markdown('<div class="main-header">🔴 LASER<br>SCAN</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header">Laserový<br>sken</div>', unsafe_allow_html=True)
     st.markdown('<div class="sub-header">analýza skenu</div>', unsafe_allow_html=True)
 
     # Vstupní soubor
-    st.markdown('<div class="section-label">// vstup</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-label">Vstupní data</div>', unsafe_allow_html=True)
     file_path = st.text_input(
         "Cesta k souboru (.npy)",
-        value="./OUT/kamera_251.npy",
-        help="Absolutní nebo relativní cesta k .npy souboru"
+        value="./OUT/kamera_251.npy"
     )
     file_name = Path(file_path).stem.replace("kamera_", "") if file_path else "?"
 
     # Detekce laseru
-    st.markdown('<div class="section-label">// detekce laseru</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-label">Detekce laseru</div>', unsafe_allow_html=True)
     laser_axis = st.selectbox(
         "Osa laseru",
         options=[0, 1],
@@ -399,16 +382,13 @@ with st.sidebar:
     )
     channel = st.selectbox(
         "Kanál signálu",
-        options=['GRAY', 'RG', 'R', 'G'],
-        help="GRAY = šedotón, RG = červený−zelený, R = červený, G = zelený"
+        options=['GRAY', 'RG', 'R', 'G']
     )
-    threshold = st.slider("Threshold (min. jas)", 0, 200, 25, 5,
-                          help="Minimum jasu pro platný bod. Nižší = více detekcí.")
-    peak_window = st.slider("Peak window [px]", 1, 50, 10, 1,
-                            help="Pološířka okna okolo maxima pro výpočet těžiště")
+    threshold = st.slider("Threshold (min. jas)", 0, 200, 25, 5)
+    peak_window = st.slider("Peak window [px]", 1, 50, 10, 1)
 
     # Filtrování šumu
-    st.markdown('<div class="section-label">// filtrování šumu</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-label">Filtrování šumu</div>', unsafe_allow_html=True)
     enable_median = st.checkbox("Mediánový filtr", value=True)
     median_kernel = st.slider("Kernel mediánu", 3, 11, 3, 2,
                               disabled=not enable_median)
@@ -417,36 +397,33 @@ with st.sidebar:
                                disabled=not enable_gaussian)
 
     # Post-processing
-    st.markdown('<div class="section-label">// post-processing</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-label">Post-processing</div>', unsafe_allow_html=True)
     smooth_kernel = st.select_slider(
-        "Smooth kernel depth mapy",
+        "Velikost kernelu pro vyhlazení",
         options=[1, 3, 5, 7, 9],
-        value=1,
-        help="1 = vypnuto, 3/5 = doporučeno"
+        value=1
     )
     min_value = st.slider("Min. hodnota (vynulování)", 0, 100, 0, 1,
-                          help="Body pod touto hodnotou jsou vynulovány. 0 = vypnuto.\n"
-                               "⚠️ Pozor: jde o souřadnici polohy laseru, ne intenzitu!")
+                          help="Pozor: jde o souřadnici polohy laseru, ne intenzitu!")
     outlier_sigma = st.slider("Outlier sigma (0 = vypnuto)", 0.0, 6.0, 0.0, 0.5,
-                              help="Body dále než N×std od mediánu jsou odstraněny")
+                              help="Body dále než N×směrodatná odchylka od mediánu jsou odstraněny")
 
     # Vizualizace
-    st.markdown('<div class="section-label">// vizualizace</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-label">Vizualizace</div>', unsafe_allow_html=True)
     colormap = st.selectbox("Barvová mapa", ['magma', 'viridis', 'plasma', 'jet', 'inferno', 'gray'])
 
     st.markdown("---")
-    run_btn = st.button("▶  SPUSTIT ANALÝZU")
+    run_btn = st.button("SPUSTIT ANALÝZU")
     save_npy = st.checkbox("Uložit depth mapu (.npy)", value=True)
 
 
-# ─────────────────────────────────────────────────────────────
-#  UI – HLAVNÍ PANEL
-# ─────────────────────────────────────────────────────────────
+
+#  Hlavní panel
 
 st.markdown(
     f'<div style="font-family:JetBrains Mono,monospace; font-size:1.1rem; '
-    f'color:#555566; margin-bottom:1rem;">soubor: '
-    f'<span style="color:#ff6b6b">{file_path}</span></div>',
+    f'color:#FFFFFF; margin-bottom:1rem;">soubor: '
+    f'<span style="color:#FFFFFF">{file_path}</span></div>',
     unsafe_allow_html=True
 )
 
@@ -458,11 +435,11 @@ if 'depth_map' not in st.session_state:
     st.session_state.npy_bytes = None
     st.session_state.last_file = None
 
-# ── Spuštění analýzy ─────────────────────────────────────────
+# Spuštění analýzy
 if run_btn:
     fp = Path(file_path)
     if not fp.exists():
-        st.error(f"❌ Soubor nenalezen: `{file_path}`")
+        st.error(f"Soubor nenalezen: `{file_path}`")
     else:
         # ── Čisté načítání ze souboru (jako v původním funkčním skriptu)
         with st.spinner("Načítám data..."):
@@ -478,7 +455,7 @@ if run_btn:
                         snimky = np.stack(snimky)
 
             except Exception as e:
-                st.error(f"❌ Chyba při načítání souboru: {e}\n\nUjistěte se, že soubor na disku není zkrácený nebo poškozený.")
+                st.error(f"Chyba při načítání souboru: {e}\n\nUjistěte se, že soubor na disku není zkrácený nebo poškozený.")
                 st.stop()
 
         # Diagnostika – zobrazení info o načtených datech
@@ -510,7 +487,7 @@ if run_btn:
         progress_bar.empty()
         status_text.empty()
 
-        st.success(f"✅ Hotovo za {elapsed:.1f} s")
+        st.success(f"Hotovo za {elapsed:.1f} s")
 
         # Uložení do session state
         st.session_state.depth_map = depth_map
@@ -531,14 +508,14 @@ if run_btn:
         npy_buf.seek(0)
         st.session_state.npy_bytes = npy_buf.getvalue()
 
-# ── Zobrazení výsledků ────────────────────────────────────────
+# Zobrazení výsledků
 if st.session_state.depth_map is not None:
     stats = st.session_state.stats
     depth_map = st.session_state.depth_map
     fname = st.session_state.last_file
 
     # Statistiky – metriky
-    st.markdown('<div class="section-label">// výsledky</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-label">Výsledky</div>', unsafe_allow_html=True)
 
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     with c1:
@@ -554,18 +531,18 @@ if st.session_state.depth_map is not None:
     with c6:
         st.metric("Std [px]", stats['std'])
 
-    st.markdown('<div class="section-label">// depth mapa</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-label">Depth mapa</div>', unsafe_allow_html=True)
 
     if st.session_state.fig_bytes:
-        # POUŽITO use_container_width místo use_column_width
+
         st.image(st.session_state.fig_bytes, use_container_width=True)
 
     # Export
-    st.markdown('<div class="section-label">// export</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-label">Export</div>', unsafe_allow_html=True)
     dl_col1, dl_col2 = st.columns(2)
     with dl_col1:
         st.download_button(
-            label="⬇ Stáhnout graf (.png)",
+            label="Stáhnout graf (.png)",
             data=st.session_state.fig_bytes,
             file_name=f"sken_{fname}_depth_map.png",
             mime="image/png"
@@ -573,27 +550,25 @@ if st.session_state.depth_map is not None:
     with dl_col2:
         if save_npy and st.session_state.npy_bytes:
             st.download_button(
-                label="⬇ Stáhnout depth mapu (.npy)",
+                label="Stáhnout depth mapu (.npy)",
                 data=st.session_state.npy_bytes,
                 file_name=f"sken_{fname}_depth_map.npy",
                 mime="application/octet-stream"
             )
 
 else:
-    # Prázdný stav
     st.markdown("""
     <div style="
         margin-top: 4rem;
         text-align: center;
         font-family: 'JetBrains Mono', monospace;
-        color: #2a2a35;
+        color: #FFFFFF;
     ">
-        <div style="font-size: 4rem;">🔴</div>
-        <div style="font-size: 1.2rem; margin-top: 1rem; color: #333344;">
+        <div style="font-size: 1.2rem; margin-top: 1rem; color: #FFFFFF;">
             Zadejte cestu k souboru
         </div>
-        <div style="font-size: 0.8rem; margin-top: 0.5rem; color: #1e1e28;">
-            a klikněte na ▶ SPUSTIT ANALÝZU
+        <div style="font-size: 0.8rem; margin-top: 0.5rem; color: #E0E0E0;">
+            Poté klikněte na SPUSTIT ANALÝZU v sidebaru
         </div>
     </div>
     """, unsafe_allow_html=True)
