@@ -624,7 +624,7 @@ if st.session_state.depth_map is not None:
         fig3d = create_3d_figure(depth_map, colormap, downsample=downsample_3d)
     st.plotly_chart(fig3d, use_container_width=True)
     st.markdown(
-        '<div class="info-box">Click & drag s myší | Kolečko myši = zoom | Dvojklik = reset pohledu'
+        '<div class="info-box">Click & drag s myší = rotace | Click & Ctrl = translační pohyb | Kolečko myši = zoom'
         ' </div>',
         unsafe_allow_html=True
     )
