@@ -6,18 +6,19 @@ import logging
 from pathlib import Path
 from typing import Tuple
 import streamlit as st
+import plotly.graph_objects as go
 import io
 import time
 
-#  Konfigurace stránky
+#  Konfigurace stranky
 
 st.set_page_config(
-    page_title="Liniový laser – analýza skenu",
+    page_title="Liniovy laser - analyza skenu",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-#  Vzhled stránky
+#  Vzhled stranky
 
 st.markdown("""
 <style>
@@ -161,7 +162,7 @@ div[data-testid="stDownloadButton"] button {
 """, unsafe_allow_html=True)
 
 
-#  Funkce pro zpracování obrazu
+#  Funkce pro zpracovani obrazu
 
 def extract_laser_signal(img: np.ndarray, channel: str = 'GRAY') -> np.ndarray:
     if img.ndim == 2:
@@ -180,7 +181,7 @@ def extract_laser_signal(img: np.ndarray, channel: str = 'GRAY') -> np.ndarray:
     elif channel == 'GRAY':
         return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     else:
-        raise ValueError(f"Neznámý channel: '{channel}'")
+        raise ValueError(f"Nezname channel: '{channel}'")
 
 
 def apply_noise_filter(signal, enable_median, median_kernel, enable_gaussian, gaussian_sigma):
@@ -265,7 +266,7 @@ def process_laser_scan(snimky_3d, params, progress_bar=None, status_text=None):
         if progress_bar and ((i + 1) % 10 == 0 or i == n - 1):
             progress_bar.progress((i + 1) / n)
             if status_text:
-                status_text.text(f"Zpracovávám snímek {i + 1} / {n}...")
+                status_text.text(f"Zpracovavam snimek {i + 1} / {n}...")
 
     depth_map = np.array(profiles).T
     depth_map = np.nan_to_num(depth_map, nan=0.0)
@@ -294,7 +295,7 @@ def create_figure(depth_map, stats, file_name, colormap):
     nonzero = depth_map[depth_map != 0]
 
     fig = plt.figure(figsize=(18, 10), facecolor='#0d0d0f')
-    fig.suptitle(f"Liniový laser – sken: {file_name}", fontsize=14,
+    fig.suptitle(f"Liniovy laser - sken: {file_name}", fontsize=14,
                  fontweight='bold', color='#e8e8e8', fontfamily='monospace')
     gs = gridspec.GridSpec(2, 2, figure=fig, hspace=0.42, wspace=0.30)
 
@@ -310,25 +311,25 @@ def create_figure(depth_map, stats, file_name, colormap):
     for spine in ax1.spines.values():
         spine.set_color('#2a2a35')
     cb = plt.colorbar(im, ax=ax1, fraction=0.015, pad=0.01)
-    cb.set_label("Poloha středu laseru [px]", rotation=90, labelpad=12,
+    cb.set_label("Poloha stredu laseru [px]", rotation=90, labelpad=12,
                  color='#888899', fontsize=9)
     cb.ax.yaxis.set_tick_params(color='#555566')
     plt.setp(cb.ax.yaxis.get_ticklabels(), color='#888899')
 
-    info = (f"Snímků: {stats['n_snimku']}   Pokrytí: {stats['pokryti_pct']} %   "
+    info = (f"Snimku: {stats['n_snimku']}   Pokryti: {stats['pokryti_pct']} %   "
             f"Min: {stats['min']}   Max: {stats['max']}   "
-            f"Průměr: {stats['mean']}   Std: {stats['std']}")
-    ax1.set_xlabel(f"Číslo snímku\n{info}", fontsize=9, color='#555566')
+            f"Prumer: {stats['mean']}   Std: {stats['std']}")
+    ax1.set_xlabel(f"Cislo snimku\n{info}", fontsize=9, color='#555566')
 
-    # Panel 2: Průměrný profil
+    # Panel 2: Prumerny profil
     ax2 = fig.add_subplot(gs[1, 0], **ax_style)
     with_data = np.where(depth_map != 0, depth_map, np.nan)
     mean_profile = np.nanmean(with_data, axis=1)
     y_pos = np.arange(len(mean_profile))
     ax2.plot(mean_profile, y_pos, color='#ff6b6b', linewidth=1.2)
     ax2.fill_betweenx(y_pos, mean_profile, alpha=0.15, color='#ff6b6b')
-    ax2.set_title("Průměrný profil laseru", fontsize=11, color='#ccccdd', pad=8)
-    ax2.set_xlabel("Střed laseru [px]", fontsize=10, color='#888899')
+    ax2.set_title("Prumerny profil laseru", fontsize=11, color='#ccccdd', pad=8)
+    ax2.set_xlabel("Stred laseru [px]", fontsize=10, color='#888899')
     ax2.set_ylabel("Pozice na senzoru [px]", fontsize=10, color='#888899')
     ax2.tick_params(colors='#555566')
     ax2.grid(True, alpha=0.15, linestyle='--', color='#444455')
@@ -341,15 +342,15 @@ def create_figure(depth_map, stats, file_name, colormap):
         ax3.hist(nonzero.ravel(), bins=60, color='#cc3344',
                  edgecolor='#0d0d0f', linewidth=0.4, alpha=0.85)
         ax3.axvline(stats['mean'], color='#ffaa44', lw=1.5, ls='--',
-                    label=f"Průměr = {stats['mean']}")
+                    label=f"Prumer = {stats['mean']}")
         ax3.axvline(stats['mean'] - stats['std'], color='#44cc88',
-                    lw=1.0, ls=':', label=f"±směrodatná odchylka = {stats['std']}")
+                    lw=1.0, ls=':', label=f"+-smerodatna odchylka = {stats['std']}")
         ax3.axvline(stats['mean'] + stats['std'], color='#44cc88', lw=1.0, ls=':')
         ax3.legend(fontsize=9, facecolor='#16161c', edgecolor='#2a2a35',
                    labelcolor='#ccccdd')
     ax3.set_title("Histogram hodnot", fontsize=11, color='#ccccdd', pad=8)
     ax3.set_xlabel("Hodnota [px]", fontsize=10, color='#888899')
-    ax3.set_ylabel("Počet bodů", fontsize=10, color='#888899')
+    ax3.set_ylabel("Pocet bodu", fontsize=10, color='#888899')
     ax3.tick_params(colors='#555566')
     ax3.grid(True, alpha=0.15, linestyle='--', color='#444455')
     for spine in ax3.spines.values():
@@ -359,14 +360,96 @@ def create_figure(depth_map, stats, file_name, colormap):
     return fig
 
 
+#  3D vizualizace
+
+def create_3d_figure(depth_map: np.ndarray, colormap: str, downsample: int = 1) -> go.Figure:
+    dm = depth_map[::downsample, ::downsample].copy()
+
+    # Nulove hodnoty
+    dm_plot = np.where(dm == 0, np.nan, dm)
+
+    # Mapovani matplotlib colormap -> plotly
+    cmap_map = {
+        'magma': 'Magma', 'viridis': 'Viridis', 'plasma': 'Plasma',
+        'jet': 'Jet', 'inferno': 'Inferno', 'gray': 'Gray',
+    }
+    plotly_cmap = cmap_map.get(colormap, 'Magma')
+
+    rows, cols = dm_plot.shape
+    x = np.arange(cols) * downsample   # cislo snimku
+    y = np.arange(rows) * downsample   # pozice na senzoru
+
+    fig = go.Figure(data=[go.Surface(
+        z=dm_plot,
+        x=x,
+        y=y,
+        colorscale=plotly_cmap,
+        colorbar=dict(
+            title=dict(
+                text="Poloha laseru [px]",
+                side="right",
+                font=dict(color='#aaaacc', family='JetBrains Mono'),
+            ),
+            thickness=15,
+            tickfont=dict(color='#aaaacc', family='JetBrains Mono'),
+        ),
+        lighting=dict(
+            ambient=0.6,
+            diffuse=0.8,
+            specular=0.3,
+            roughness=0.5,
+        ),
+    )])
+
+    fig.update_layout(
+        paper_bgcolor='#0d0d0f',
+        plot_bgcolor='#111115',
+        font=dict(color='#ccccdd', family='JetBrains Mono'),
+        margin=dict(l=0, r=0, t=40, b=0),
+        title=dict(
+            text="3D Depth mapa",
+            font=dict(size=14, color='#e8e8e8'),
+            x=0.02,
+        ),
+        scene=dict(
+            bgcolor='#111115',
+            xaxis=dict(
+                title=dict(text='Cislo snimku', font=dict(color='#888899', size=11)),
+                tickfont=dict(color='#666677', size=9),
+                gridcolor='#2a2a35',
+                backgroundcolor='#111115',
+            ),
+            yaxis=dict(
+                title=dict(text='Pozice na senzoru [px]', font=dict(color='#888899', size=11)),
+                tickfont=dict(color='#666677', size=9),
+                gridcolor='#2a2a35',
+                backgroundcolor='#111115',
+            ),
+            zaxis=dict(
+                title=dict(text='Hloubka [px]', font=dict(color='#888899', size=11)),
+                tickfont=dict(color='#666677', size=9),
+                gridcolor='#2a2a35',
+                backgroundcolor='#0d0d0f',
+                autorange='reversed',
+            ),
+            camera=dict(
+                eye=dict(x=1.6, y=-1.6, z=1.2),
+            ),
+        ),
+        height=650,
+    )
+
+    return fig
+
+
 #  Sidebar
 
 with st.sidebar:
-    st.markdown('<div class="main-header">Laserový<br>sken</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub-header">analýza skenu</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header">Laserovy<br>sken</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">analyza skenu</div>', unsafe_allow_html=True)
 
-    # Vstupní soubor
-    st.markdown('<div class="section-label">Vstupní data</div>', unsafe_allow_html=True)
+    # Vstupni soubor
+    st.markdown('<div class="section-label">Vstupni data</div>', unsafe_allow_html=True)
     file_path = st.text_input(
         "Cesta k souboru (.npy)",
         value="./OUT/kamera_251.npy"
@@ -378,47 +461,53 @@ with st.sidebar:
     laser_axis = st.selectbox(
         "Osa laseru",
         options=[0, 1],
-        format_func=lambda x: "0 – Horizontálně" if x == 0 else "1 – Vertikálně"
+        format_func=lambda x: "0 - Horizontalne" if x == 0 else "1 - Vertikalne"
     )
     channel = st.selectbox(
-        "Kanál signálu",
+        "Kanal signalu",
         options=['GRAY', 'RG', 'R', 'G']
     )
     threshold = st.slider("Threshold (min. jas)", 0, 200, 25, 5)
     peak_window = st.slider("Peak window [px]", 1, 50, 10, 1)
 
-    # Filtrování šumu
-    st.markdown('<div class="section-label">Filtrování šumu</div>', unsafe_allow_html=True)
-    enable_median = st.checkbox("Mediánový filtr", value=True)
-    median_kernel = st.slider("Kernel mediánu", 3, 11, 3, 2,
+    # Filtrovani sumu
+    st.markdown('<div class="section-label">Filtrovani sumu</div>', unsafe_allow_html=True)
+    enable_median = st.checkbox("Medianovy filtr", value=True)
+    median_kernel = st.slider("Kernel medianu", 3, 11, 3, 2,
                               disabled=not enable_median)
-    enable_gaussian = st.checkbox("Gaussovský filtr", value=False)
+    enable_gaussian = st.checkbox("Gaussovsky filtr", value=False)
     gaussian_sigma = st.slider("Sigma gaussu", 0.5, 5.0, 1.0, 0.5,
                                disabled=not enable_gaussian)
 
     # Post-processing
     st.markdown('<div class="section-label">Post-processing</div>', unsafe_allow_html=True)
     smooth_kernel = st.select_slider(
-        "Velikost kernelu pro vyhlazení",
+        "Velikost kernelu pro vyhlazeni",
         options=[1, 3, 5, 7, 9],
         value=1
     )
-    min_value = st.slider("Min. hodnota (vynulování)", 0, 100, 0, 1,
-                          help="Pozor: jde o souřadnici polohy laseru, ne intenzitu!")
+    min_value = st.slider("Min. hodnota (vynulovani)", 0, 100, 0, 1,
+                          help="Pozor: jde o souradnici polohy laseru, ne intenzitu!")
     outlier_sigma = st.slider("Outlier sigma (0 = vypnuto)", 0.0, 6.0, 0.0, 0.5,
-                              help="Body dále než N×směrodatná odchylka od mediánu jsou odstraněny")
+                              help="Body dale nez N*smerodatna odchylka od medianu jsou odstraneny")
 
     # Vizualizace
     st.markdown('<div class="section-label">Vizualizace</div>', unsafe_allow_html=True)
-    colormap = st.selectbox("Barvová mapa", ['magma', 'viridis', 'plasma', 'jet', 'inferno', 'gray'])
+    colormap = st.selectbox("Barvova mapa", ['magma', 'viridis', 'plasma', 'jet', 'inferno', 'gray'])
+
+    downsample_3d = st.select_slider(
+        "Rozliseni 3D (downsample)",
+        options=[1, 2, 4, 8],
+        value=2,
+        help="Vyssi hodnota = rychlejsi vykreslovani, nizsi detail"
+    )
 
     st.markdown("---")
-    run_btn = st.button("SPUSTIT ANALÝZU")
-    save_npy = st.checkbox("Uložit depth mapu (.npy)", value=True)
+    run_btn = st.button("SPUSTIT ANALYZU")
+    save_npy = st.checkbox("Ulozit depth mapu (.npy)", value=True)
 
 
-
-#  Hlavní panel
+#  Hlavni panel
 
 st.markdown(
     f'<div style="font-family:JetBrains Mono,monospace; font-size:1.1rem; '
@@ -435,14 +524,13 @@ if 'depth_map' not in st.session_state:
     st.session_state.npy_bytes = None
     st.session_state.last_file = None
 
-# Spuštění analýzy
+# Spusteni analyzy
 if run_btn:
     fp = Path(file_path)
     if not fp.exists():
         st.error(f"Soubor nenalezen: `{file_path}`")
     else:
-        # ── Čisté načítání ze souboru
-        with st.spinner("Načítám data..."):
+        with st.spinner("Nacitam data..."):
             try:
                 snimky = np.load(str(fp), allow_pickle=True)
 
@@ -454,13 +542,12 @@ if run_btn:
                         snimky = np.stack(snimky)
 
             except Exception as e:
-                st.error(f"Chyba při načítání souboru: {e}\n\nUjistěte se, že soubor na disku není zkrácený nebo poškozený.")
+                st.error(f"Chyba pri nacitani souboru: {e}")
                 st.stop()
 
-        # Diagnostika – zobrazení info o načtených datech
         st.markdown(
             f'<div class="info-box">'
-            f'Načteno {len(snimky)} snímků &nbsp;|&nbsp; '
+            f'Nacteno {len(snimky)} snimku &nbsp;|&nbsp; '
             f'shape: {snimky.shape} &nbsp;|&nbsp; '
             f'dtype: {snimky.dtype}'
             f'</div>',
@@ -488,12 +575,10 @@ if run_btn:
 
         st.success(f"Hotovo za {elapsed:.1f} s")
 
-        # Uložení do session state
         st.session_state.depth_map = depth_map
         st.session_state.stats = stats
         st.session_state.last_file = file_name
 
-        # Vygenerování figury
         fig = create_figure(depth_map, stats, file_name, colormap)
         buf = io.BytesIO()
         fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='#0d0d0f')
@@ -501,47 +586,55 @@ if run_btn:
         buf.seek(0)
         st.session_state.fig_bytes = buf.getvalue()
 
-        # NPY bytes pro stažení
         npy_buf = io.BytesIO()
         np.save(npy_buf, depth_map)
         npy_buf.seek(0)
         st.session_state.npy_bytes = npy_buf.getvalue()
 
-# Zobrazení výsledků
+# Zobrazeni vysledku
 if st.session_state.depth_map is not None:
     stats = st.session_state.stats
     depth_map = st.session_state.depth_map
     fname = st.session_state.last_file
 
-    # Statistiky – metriky
-    st.markdown('<div class="section-label">Výsledky</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-label">Vysledky</div>', unsafe_allow_html=True)
 
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     with c1:
-        st.metric("Snímků", stats['n_snimku'])
+        st.metric("Snimku", stats['n_snimku'])
     with c2:
-        st.metric("Pokrytí", f"{stats['pokryti_pct']} %")
+        st.metric("Pokryti", f"{stats['pokryti_pct']} %")
     with c3:
         st.metric("Min [px]", stats['min'])
     with c4:
         st.metric("Max [px]", stats['max'])
     with c5:
-        st.metric("Průměr [px]", stats['mean'])
+        st.metric("Prumer [px]", stats['mean'])
     with c6:
         st.metric("Std [px]", stats['std'])
 
-    st.markdown('<div class="section-label">Depth mapa</div>', unsafe_allow_html=True)
-
+    # 2D depth mapa
+    st.markdown('<div class="section-label">Depth mapa (2D)</div>', unsafe_allow_html=True)
     if st.session_state.fig_bytes:
-
         st.image(st.session_state.fig_bytes, use_container_width=True)
+
+    # 3D vizualizace
+    st.markdown('<div class="section-label">3D Vizualizace</div>', unsafe_allow_html=True)
+    with st.spinner("Generuji 3D graf..."):
+        fig3d = create_3d_figure(depth_map, colormap, downsample=downsample_3d)
+    st.plotly_chart(fig3d, use_container_width=True)
+    st.markdown(
+        '<div class="info-box">Click & drag s myší | Kolečko myši = zoom | Dvojklik = reset pohledu'
+        ' </div>',
+        unsafe_allow_html=True
+    )
 
     # Export
     st.markdown('<div class="section-label">Export</div>', unsafe_allow_html=True)
     dl_col1, dl_col2 = st.columns(2)
     with dl_col1:
         st.download_button(
-            label="Stáhnout graf (.png)",
+            label="Stahnout graf (.png)",
             data=st.session_state.fig_bytes,
             file_name=f"sken_{fname}_depth_map.png",
             mime="image/png"
@@ -549,7 +642,7 @@ if st.session_state.depth_map is not None:
     with dl_col2:
         if save_npy and st.session_state.npy_bytes:
             st.download_button(
-                label="Stáhnout depth mapu (.npy)",
+                label="Stahnout depth mapu (.npy)",
                 data=st.session_state.npy_bytes,
                 file_name=f"sken_{fname}_depth_map.npy",
                 mime="application/octet-stream"
@@ -567,7 +660,7 @@ else:
             Zadejte cestu k souboru
         </div>
         <div style="font-size: 0.8rem; margin-top: 0.5rem; color: #E0E0E0;">
-            Poté klikněte na SPUSTIT ANALÝZU v sidebaru
+            Pote kliknete na SPUSTIT ANALYZU v sidebaru
         </div>
     </div>
     """, unsafe_allow_html=True)
