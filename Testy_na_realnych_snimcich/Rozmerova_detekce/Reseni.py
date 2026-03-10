@@ -11,7 +11,6 @@ OBJECT_IMAGE       = "Obrazky/lego2c.jpg"     # měřený předmět
 OUTPUT_FOLDER      = "Vysledky"                # složka pro ukládání výsledků
 
 # Parametry šachovnice
-
 CHECKERBOARD_ROWS        = 23      # počet vnitřních rohů na výšku
 CHECKERBOARD_COLS        = 32     # počet vnitřních rohů na šířku
 
@@ -31,11 +30,10 @@ WINDOW_MAX_HEIGHT = 800     # maximální výška okna
 
 
 
-
 def load_image(path: str, flags=cv2.IMREAD_COLOR) -> np.ndarray:
     img = cv2.imread(path, flags)
     if img is None:
-        print(f"[CHYBA] Nelze načíst obrázek: {path}")
+        print(f"Nelze načíst obrázek: {path}")
         sys.exit(1)
     return img
 
@@ -97,7 +95,7 @@ def _try_find_corners(gray: np.ndarray, pattern_size: tuple):
 
     return False, None, gray, 1.0
 
-
+# Kalibrace přes šachovnici
 def calibrate_from_checkerboard(image_path: str, rows: int, cols: int,
                                  square_size_mm: float):
     img = load_image(image_path)
@@ -112,11 +110,11 @@ def calibrate_from_checkerboard(image_path: str, rows: int, cols: int,
     objp = np.zeros((rows * cols, 3), np.float32)
     objp[:, :2] = np.mgrid[0:cols, 0:rows].T.reshape(-1, 2) * square_size_mm
 
-    print("  Hledám rohy šachovnice ...")
+    print("Hledám rohy šachovnici")
     ret, corners, gray_scaled, found_scale = _try_find_corners(gray, pattern_size)
 
     if not ret:
-        print("[CHYBA] Rohy šachovnice nebyly nalezeny.")
+        print("Rohy šachovnice nebyly nalezeny.")
         sys.exit(1)
 
 
@@ -158,7 +156,7 @@ def calibrate_from_checkerboard(image_path: str, rows: int, cols: int,
     px_per_mm = (px_per_mm_x + px_per_mm_y) / 2.0
 
     print(f"Kalibrace probehla uspesne.")
-    print(f"     Rozliseni: {px_per_mm:.4f} px/mm  "
+    print(f"Rozliseni: {px_per_mm:.4f} px/mm  "
           f"(x: {px_per_mm_x:.4f}, y: {px_per_mm_y:.4f})")
 
     # vizualizace rohů šachovnice
@@ -176,12 +174,10 @@ def calibrate_from_checkerboard(image_path: str, rows: int, cols: int,
 
     return cam_mtx, dist, px_per_mm
 
-
+# Hledání a měření objektů
 def find_and_measure_objects(image_path: str, px_per_mm: float,
                               cam_mtx=None, dist=None):
-    """
-    Najde objekty v obraze a změří jejich rozměry.
-    """
+
     img = load_image(image_path)
 
 
@@ -212,14 +208,14 @@ def find_and_measure_objects(image_path: str, px_per_mm: float,
                                    cv2.CHAIN_APPROX_SIMPLE)
 
     if not contours:
-        print("[INFO] Zadne kontury nenalezeny.")
+        print("Zadne kontury nenalezeny.")
         return
 
 
     contours = [c for c in contours if cv2.contourArea(c) >= MIN_OBJECT_AREA_PX]
 
     if not contours:
-        print("[INFO] Zadne kontury nad minimalni plochou. Zkuste snizit MIN_OBJECT_AREA_PX.")
+        print("Zadne kontury nad minimalni plochou.")
         return
 
     # Omezení počtu nalezených ploch (od nějvětších)
@@ -228,7 +224,7 @@ def find_and_measure_objects(image_path: str, px_per_mm: float,
         contours = contours[:MAX_OBJECTS]
 
     result = img.copy()
-    print("\n── Nalezene objekty ────")
+    print("\nNalezene objekty")
     for idx, cnt in enumerate(contours):
         area_px = cv2.contourArea(cnt)
 
@@ -295,7 +291,7 @@ def find_and_measure_objects(image_path: str, px_per_mm: float,
             cv2.putText(result, line, (bx + padding, ty),
                         font, font_scale, (0, 255, 180), thickness, cv2.LINE_AA)
 
-    print("\n────────")
+
 
     out_path = next_output_path(OUTPUT_FOLDER)
     cv2.imwrite(out_path, result)
@@ -303,20 +299,17 @@ def find_and_measure_objects(image_path: str, px_per_mm: float,
 
     show_image("Mereni objektu (stiskni klavesu)", result)
 
-
 # Hlavní program
 
 def main():
-    # ověření souborů
     for path in (CHECKERBOARD_IMAGE, OBJECT_IMAGE):
         if not os.path.isfile(path):
             print(f"[CHYBA] Soubor nenalezen: {path}")
             print("  Zkontrolujte cesty v sekci KONFIGURACE na začátku skriptu.")
             sys.exit(1)
 
-    print("=" * 60)
-    print(" Měření rozměrů předmětu – OpenCV")
-    print("=" * 60)
+
+    print(" Měření rozměrů předmětu ")
     print(f"\nKalibrace ze souboru:  {CHECKERBOARD_IMAGE}")
     print(f"Šachovnice:            {CHECKERBOARD_COLS} x {CHECKERBOARD_ROWS} vnitřních rohů")
     print(f"Velikost čtverce:      {CHECKERBOARD_SQUARE_MM} mm\n")
