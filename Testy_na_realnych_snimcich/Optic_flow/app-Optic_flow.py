@@ -7,7 +7,11 @@ import zipfile
 import io
 from datetime import datetime
 
-# ── Page config ──────────────────────────────────────────────────────────────
+
+# Tlačítka na přepínání snímků nefungují...
+# Kombinovaný pohled na snímek (ten je v pořádku) ale pod ním se vytváří "jeho stín", který je tam navíc
+
+# Nastavení stránky
 st.set_page_config(
     page_title="Optical Flow Analyzer",
     page_icon="🌊",
@@ -15,7 +19,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── Custom CSS ────────────────────────────────────────────────────────────────
+# CSS
 st.markdown("""
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;600&display=swap');
@@ -154,12 +158,10 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CORE OPTICAL FLOW FUNCTIONS
-# ─────────────────────────────────────────────────────────────────────────────
+
+# Optic flow funkce (flow dense, flow sparse)
 
 def compute_flow_dense(gray1, gray2, pyr_scale, levels, winsize, iterations, poly_n, poly_sigma):
-    """Farneback dense optical flow – vrací full flow field (H×W×2)."""
     g1 = cv2.GaussianBlur(gray1, (5, 5), 0)
     g2 = cv2.GaussianBlur(gray2, (5, 5), 0)
     return cv2.calcOpticalFlowFarneback(
@@ -171,11 +173,7 @@ def compute_flow_dense(gray1, gray2, pyr_scale, levels, winsize, iterations, pol
 
 def compute_flow_sparse(gray1, gray2, max_corners=500, quality=0.01,
                          min_dist=7, block_size=7, lk_winsize=21, lk_levels=3):
-    """Lucas-Kanade sparse optical flow.
-    Vrací (pts1, pts2, good_mask) – body ve frame1, jejich shody ve frame2,
-    a booleovský mask dobrých shod.
-    Převede výsledek TAKÉ na hustý flow field pro sdílenou pipeline make_panels.
-    """
+
     g1 = cv2.GaussianBlur(gray1, (5, 5), 0)
     g2 = cv2.GaussianBlur(gray2, (5, 5), 0)
 
@@ -200,7 +198,7 @@ def compute_flow_sparse(gray1, gray2, max_corners=500, quality=0.01,
     p1_good = pts1[good].reshape(-1, 2)
     p2_good = pts2[good].reshape(-1, 2)
 
-    # Build dense-like flow field by scattering sparse vectors
+    # Vytvoření proudového pole rozptylem vektorů
     h, w = gray1.shape
     flow = np.zeros((h, w, 2), dtype=np.float32)
     for (x1, y1), (x2, y2) in zip(p1_good, p2_good):
@@ -224,28 +222,28 @@ def make_panels(frame1_bgr, frame2_bgr, flow, motion_threshold_factor=2.0, arrow
     typical_motion = np.percentile(moving_mags, 50) if len(moving_mags) > 0 else 1.0
     arrow_scale = 40.0 / max(typical_motion, 1.0)
 
-    # Panel 1 – original second frame
+    # Panel 1 – odriginální druhý obraz
     p1 = frame2_bgr.copy()
 
-    # Panel 2 – HSV flow map
+    # Panel 2 – HSV mapa toku
     hsv = np.zeros_like(frame1_bgr)
     hsv[..., 1] = 255
     hsv[..., 0] = angle * 180 / np.pi / 2
     hsv[..., 2] = cv2.normalize(magnitude, None, 0, 255, cv2.NORM_MINMAX)
     p2 = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
 
-    # Panel 3 – motion mask overlay
+    # Panel 3 – překrytí pohybové masky
     p3 = frame2_bgr.copy()
     highlight = np.zeros_like(frame2_bgr)
     highlight[motion_mask] = (0, 0, 255)
     p3 = cv2.addWeighted(p3, 0.65, highlight, 0.35, 0)
 
-    # Panel 4 – arrows
+    # Panel 4 – šipky
     p4 = frame2_bgr.copy()
     h, w = frame2_bgr.shape[:2]
 
     if method == "sparse" and sparse_pts1 is not None and len(sparse_pts1) > 0:
-        # Draw arrows at tracked feature points
+        # Nakreslení šipek na sledovaných bodech
         for (x1, y1), (x2, y2) in zip(sparse_pts1, sparse_pts2):
             fx, fy = x2 - x1, y2 - y1
             mag = np.hypot(fx, fy)
@@ -261,7 +259,7 @@ def make_panels(frame1_bgr, frame2_bgr, flow, motion_threshold_factor=2.0, arrow
             cv2.arrowedLine(p4, start, end, color, 2, tipLength=0.3, line_type=cv2.LINE_AA)
             cv2.circle(p4, start, 3, (255, 255, 255), -1, cv2.LINE_AA)
     else:
-        # Dense grid arrows
+        # Šipky husté mřížky
         for y in range(0, h, arrow_step):
             for x in range(0, w, arrow_step):
                 if motion_mask[y, x]:
@@ -276,7 +274,7 @@ def make_panels(frame1_bgr, frame2_bgr, flow, motion_threshold_factor=2.0, arrow
                         color = (0, int(255 * (1 - t)), 255)
                     cv2.arrowedLine(p4, (x, y), end, color, 2, tipLength=0.3, line_type=cv2.LINE_AA)
 
-    # Stats
+    # Statisktiky
     moving_px = int(motion_mask.sum())
     total_px = motion_mask.size
     coverage = moving_px / total_px * 100
@@ -311,9 +309,8 @@ def make_combined(panels, target_h=None):
     return np.hstack(resized)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# HEADER
-# ─────────────────────────────────────────────────────────────────────────────
+
+# Hlavní text stránky
 
 col_logo, col_title = st.columns([1, 8])
 with col_title:
@@ -323,22 +320,20 @@ with col_title:
 
 st.markdown("---")
 
-# ─────────────────────────────────────────────────────────────────────────────
-# SIDEBAR – Parameters
-# ─────────────────────────────────────────────────────────────────────────────
+# Sidebar
 
 with st.sidebar:
-    st.markdown("### ⚙️ Parametry")
+    st.markdown("### Parametry")
 
-    # ── Method selector ───────────────────────────────────────────────────────
+    # Výběr metody
     st.markdown("**Metoda výpočtu**")
     flow_method = st.radio(
         "",
-        ["🌊  Dense Flow (Farneback)", "✨  Sparse Flow (Lucas-Kanade)"],
+        [" Dense Flow (Farneback)", " Sparse Flow (Lucas-Kanade)"],
         key="flow_method",
         label_visibility="collapsed",
     )
-    is_dense = flow_method.startswith("🌊")
+    is_dense = flow_method.startswith("")
 
     st.markdown("---")
 
@@ -376,15 +371,11 @@ with st.sidebar:
     video_step = st.slider("Analyzovat každý N-tý frame", 1, 10, 1)
     max_frames = st.slider("Max. počet framů", 10, 500, 100)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# MAIN TABS
-# ─────────────────────────────────────────────────────────────────────────────
+# Záložky - snímky / video
 
-tab_img, tab_vid = st.tabs(["🖼️  OBRAZY", "🎬  VIDEO"])
+tab_img, tab_vid = st.tabs(["🖼️  Snímky", "🎬  Video"])
 
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 1 – IMAGES
-# ══════════════════════════════════════════════════════════════════════════════
+# Záložka 1: Snímky
 
 with tab_img:
     c1, c2 = st.columns(2)
@@ -405,7 +396,7 @@ with tab_img:
             st.image(bgr_to_rgb(frame2), use_container_width=True)
 
     if f1 and f2:
-        if st.button("🔍  ANALYZOVAT POHYB", key="btn_img"):
+        if st.button("Analyzovat pohyb", key="btn_img"):
             with st.spinner("Počítám optical flow…"):
                 if frame1.shape != frame2.shape:
                     frame2 = cv2.resize(frame2, (frame1.shape[1], frame1.shape[0]))
@@ -429,9 +420,9 @@ with tab_img:
                                                          sparse_pts1=pts1,
                                                          sparse_pts2=pts2)
 
-            # Stats
+            # Statistiky
             st.markdown("---")
-            st.markdown('<div class="panel-title">📊 Statistiky pohybu</div>', unsafe_allow_html=True)
+            st.markdown('<div class="panel-title">Statistiky pohybu</div>', unsafe_allow_html=True)
             mc1, mc2, mc3, mc4 = st.columns(4)
             mc1.metric("Pohybující se pixely", f"{stats['moving_pixels']:,}")
             mc2.metric("Pokrytí pohybem", f"{stats['coverage_pct']:.1f}%")
@@ -439,7 +430,7 @@ with tab_img:
             mc4.metric("Max. magnituda", f"{stats['max_magnitude']:.2f}")
 
             st.markdown("---")
-            st.markdown('<div class="panel-title">🔬 Výsledky analýzy</div>', unsafe_allow_html=True)
+            st.markdown('<div class="panel-title">Výsledky analýzy</div>', unsafe_allow_html=True)
 
             labels = ["Originál", "Flow mapa (HSV)", "Pohybující se oblasti", "Šipky pohybu"]
             panels_out = [p1, p2, p3, p4]
@@ -451,7 +442,7 @@ with tab_img:
                     st.markdown(f'<div class="panel-title">{label}</div>', unsafe_allow_html=True)
                     st.image(bgr_to_rgb(panel), use_container_width=True)
 
-            # Download – ZIP se všemi panely + combined
+            # Stažení výsledků - ZIP
             combined = make_combined([p1, p2, p3, p4])
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -464,28 +455,25 @@ with tab_img:
 
             st.markdown("---")
             st.download_button(
-                "⬇️  Stáhnout výsledky (ZIP)",
+                "Stáhnout výsledky (ZIP)",
                 data=zip_buf,
                 file_name=f"optical_flow_{ts}.zip",
                 mime="application/zip",
             )
 
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 2 – VIDEO
-# ══════════════════════════════════════════════════════════════════════════════
+# Záložka 2: video
 
-# Session state init
+# Ukazatel progressu
 if "vid_results" not in st.session_state:
     st.session_state.vid_results = None
 if "vid_browser_idx" not in st.session_state:
     st.session_state.vid_browser_idx = 0
 
 with tab_vid:
-    st.markdown('<div class="panel-title">🎬 Nahraj video soubor</div>', unsafe_allow_html=True)
+    st.markdown('<div class="panel-title">Nahraj video soubor</div>', unsafe_allow_html=True)
     vid_file = st.file_uploader("", type=["mp4","avi","mov","mkv","webm"], key="vid")
 
     if vid_file:
-        # Save to temp
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
         tmp.write(vid_file.read())
         tmp.flush()
@@ -505,7 +493,7 @@ with tab_vid:
         vc3.metric("Rozlišení", f"{w_vid}×{h_vid}")
         vc4.metric("Délka", f"{total/fps:.1f}s")
 
-        analyze_btn = st.button("🔍  ANALYZOVAT VIDEO", key="btn_vid")
+        analyze_btn = st.button("Analyzovat video", key="btn_vid")
 
         if analyze_btn:
             cap = cv2.VideoCapture(tmp_path)
@@ -576,9 +564,9 @@ with tab_vid:
 
             st.session_state.vid_results = results
             st.session_state.vid_browser_idx = 0
-            st.success(f"✅ Hotovo! Zpracováno {len(results)} segmentů.")
+            st.success(f"Zpracováno {len(results)} segmentů.")
 
-    # ── Results & browser (persists across reruns) ────────────────────────────
+    # Výsledky a jejich prohlížeč
     results = st.session_state.vid_results
     if results:
         import pandas as pd
@@ -588,9 +576,9 @@ with tab_vid:
         all_avg_mag   = [r["stats"]["avg_magnitude"]  for r in results]
         all_max_mag   = [r["stats"]["max_magnitude"]  for r in results]
 
-        # ── Aggregate charts ──────────────────────────────────────────────────
+        # Grafy
         st.markdown("---")
-        st.markdown('<div class="panel-title">📈 Časový průběh pohybu</div>',
+        st.markdown('<div class="panel-title">Časový průběh pohybu</div>',
                     unsafe_allow_html=True)
         df = pd.DataFrame({
             "Frame": frame_indices,
@@ -608,12 +596,12 @@ with tab_vid:
         sc2.metric("Průměrná magnituda",  f"{np.mean(all_avg_mag):.2f}")
         sc3.metric("Maximální magnituda", f"{np.max(all_max_mag):.2f}")
 
-        # ── FRAME BROWSER ────────────────────────────────────────────────────
+        # Prohlížeč snímků
         st.markdown("---")
         st.markdown('<div class="panel-title">🔍 Prohlížeč snímků</div>',
                     unsafe_allow_html=True)
 
-        # Navigation buttons
+        # Tlačítka pro pohyb ve snímcích
         nav1, nav2, nav3, nav4, nav5 = st.columns([1, 1, 4, 1, 1])
         with nav1:
             if st.button("⏮", help="První segment"):
@@ -628,7 +616,7 @@ with tab_vid:
             if st.button("⏭", help="Poslední segment"):
                 st.session_state.vid_browser_idx = n - 1
 
-        # Slider
+        # Posuvník
         slider_val = st.slider(
             "Přejít na segment",
             min_value=0, max_value=n - 1,
@@ -641,7 +629,7 @@ with tab_vid:
         cur = st.session_state.vid_browser_idx
         seg = results[cur]
 
-        # Info bar
+        # Informační pruh
         st.markdown(
             f'<div class="panel-title">'
             f'Segment <span style="color:#00e5ff">{cur + 1}</span> / {n}'
@@ -651,7 +639,7 @@ with tab_vid:
             unsafe_allow_html=True,
         )
 
-        # View mode
+        # Náhlednutí
         view_mode = st.radio(
             "Zobrazení",
             ["Kombinovaný pohled", "Originál", "Flow mapa",
@@ -667,7 +655,7 @@ with tab_vid:
             "Šipky pohybu":          seg["p4"],
         }
 
-        # 4-panel grid OR single panel
+        # Kombinovaný pohled
         if view_mode == "Kombinovaný pohled":
             g1, g2 = st.columns(2)
             g3, g4 = st.columns(2)
@@ -683,7 +671,7 @@ with tab_vid:
         else:
             st.image(bgr_to_rgb(panel_map[view_mode]), use_container_width=True)
 
-        # Per-frame stats
+        # Statistiky za frame
         s = seg["stats"]
         fc1, fc2, fc3, fc4 = st.columns(4)
         fc1.metric("Pohybující se pixely", f"{s['moving_pixels']:,}")
@@ -691,7 +679,7 @@ with tab_vid:
         fc3.metric("Průměrná magnituda",   f"{s['avg_magnitude']:.2f}")
         fc4.metric("Max. magnituda",       f"{s['max_magnitude']:.2f}")
 
-        # Downloads
+        # Stahování
         st.markdown("---")
         dl1, dl2 = st.columns(2)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -700,7 +688,7 @@ with tab_vid:
         with dl1:
             chosen_panel = panel_map[view_mode] if view_mode != "Kombinovaný pohled" else seg["combined"]
             st.download_button(
-                "⬇️  Stáhnout aktuální snímek (PNG)",
+                "⬇Stáhnout aktuální snímek (PNG)",
                 data=encode_png(chosen_panel),
                 file_name=f"frame_{fi_cur:05d}_{view_mode.replace(' ','_')}.png",
                 mime="image/png",
@@ -719,7 +707,7 @@ with tab_vid:
                     zf.writestr(f"frame_{fi_r:05d}_sipky.png",     encode_png(r["p4"]))
             zip_buf.seek(0)
             st.download_button(
-                "⬇️  Stáhnout všechny výsledky (ZIP)",
+                "⬇Stáhnout všechny výsledky (ZIP)",
                 data=zip_buf,
                 file_name=f"video_flow_{ts}.zip",
                 mime="application/zip",
