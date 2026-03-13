@@ -5,8 +5,17 @@ import tempfile
 import os
 import zipfile
 import io
+import signal
+import sys
 from datetime import datetime
 import pandas as pd
+
+# Clean shutdown on Ctrl+C / SIGTERM
+def _shutdown(sig, frame):
+    sys.exit(0)
+
+signal.signal(signal.SIGINT,  _shutdown)
+signal.signal(signal.SIGTERM, _shutdown)
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -67,7 +76,7 @@ _ss("vid_idx",        0)
 _ss("vid_tmp_path",   None)
 _ss("vid_file_id",    None)
 _ss("vid_analyzing",  False)
-_ss("vid_stop",       False)
+_ss("vid_slider",     0)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -256,7 +265,7 @@ with tab_img:
         if f1:
             img1_np = np.frombuffer(f1.read(), np.uint8)
             frame1 = cv2.imdecode(img1_np, cv2.IMREAD_COLOR)
-            st.image(bgr_to_rgb(frame1), use_container_width=True)
+            st.image(bgr_to_rgb(frame1), width="stretch")
 
     with c2:
         st.markdown('<div class="panel-title">📷 Snímek 2 (cílový)</div>', unsafe_allow_html=True)
@@ -265,7 +274,7 @@ with tab_img:
         if f2:
             img2_np = np.frombuffer(f2.read(), np.uint8)
             frame2 = cv2.imdecode(img2_np, cv2.IMREAD_COLOR)
-            st.image(bgr_to_rgb(frame2), use_container_width=True)
+            st.image(bgr_to_rgb(frame2), width="stretch")
 
     if f1 and f2:
         if st.button("🔍  ANALYZOVAT POHYB", key="btn_img"):
@@ -302,7 +311,7 @@ with tab_img:
                     ["Originál", "Flow mapa (HSV)", "Pohybující se oblasti", "Šipky pohybu"])):
                 with [row1, row2][i // 2][i % 2]:
                     st.markdown(f'<div class="panel-title">{label}</div>', unsafe_allow_html=True)
-                    st.image(bgr_to_rgb(panel), use_container_width=True)
+                    st.image(bgr_to_rgb(panel), width="stretch")
 
             combined = make_combined([p1, p2, p3, p4])
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -334,7 +343,6 @@ with tab_vid:
             st.session_state.vid_results   = None
             st.session_state.vid_slider    = 0
             st.session_state.vid_analyzing = False
-            st.session_state.vid_stop      = False
             if st.session_state.vid_tmp_path and os.path.exists(st.session_state.vid_tmp_path):
                 try: os.unlink(st.session_state.vid_tmp_path)
                 except: pass
@@ -358,20 +366,11 @@ with tab_vid:
         vc3.metric("Rozlišení", f"{w_vid}×{h_vid}")
         vc4.metric("Délka", f"{total/fps:.1f}s")
 
-        # Analyze / Stop buttons
-        btn_col1, btn_col2 = st.columns([3, 1])
-        with btn_col1:
-            analyze_btn = st.button("🔍  ANALYZOVAT VIDEO", key="btn_vid",
-                                     disabled=st.session_state.vid_analyzing)
-        with btn_col2:
-            stop_btn = st.button("⏹  ZASTAVIT", key="btn_stop",
-                                  disabled=not st.session_state.vid_analyzing)
-        if stop_btn:
-            st.session_state.vid_stop = True
+        analyze_btn = st.button("🔍  ANALYZOVAT VIDEO", key="btn_vid",
+                                 disabled=st.session_state.vid_analyzing)
 
         if analyze_btn:
             st.session_state.vid_analyzing = True
-            st.session_state.vid_stop      = False
             st.session_state.vid_results   = None
             st.session_state.vid_slider    = 0
 
@@ -386,60 +385,56 @@ with tab_vid:
             prev_bgr  = None
             fi = 0; pi = 0
 
-            while True:
-                if st.session_state.vid_stop:
-                    status_ph.warning("⏹ Analýza zastavena uživatelem.")
-                    break
-
-                ret, bgr = cap.read()
-                if not ret:
-                    break
-                gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-
-                if prev_gray is not None and (fi % video_step == 0):
-                    if is_dense:
-                        flow = compute_flow_dense(prev_gray, gray, pyr_scale, levels, winsize,
-                                                   iterations, poly_n, poly_sigma)
-                        p1, p2, p3, p4, stats = make_panels(prev_bgr, bgr, flow,
-                                                              threshold_factor, arrow_step, "dense")
-                    else:
-                        flow, pts1, pts2 = compute_flow_sparse(
-                            prev_gray, gray, lk_max_corners, lk_quality, lk_min_dist,
-                            lk_block, lk_winsize, lk_levels)
-                        p1, p2, p3, p4, stats = make_panels(prev_bgr, bgr, flow,
-                                                              threshold_factor, arrow_step, "sparse",
-                                                              sparse_pts1=pts1, sparse_pts2=pts2)
-                    combined = make_combined([p1, p2, p3, p4])
-                    preview_ph.image(bgr_to_rgb(combined), caption=f"Frame {fi}",
-                                     use_container_width=True)
-                    results.append({
-                        "frame_idx": fi,
-                        "time_s":    fi / fps,
-                        "p1": p1, "p2": p2, "p3": p3, "p4": p4,
-                        "combined": combined,
-                        "stats": stats,
-                    })
-                    pi += 1
-                    prog_bar.progress(min(pi / frames_to_process, 1.0))
-                    status_ph.markdown(
-                        f'<div class="panel-title">Zpracováno: {pi}/{frames_to_process} '
-                        f'segmentů · Frame {fi}/{total}</div>',
-                        unsafe_allow_html=True,
-                    )
-                    if pi >= frames_to_process:
+            try:
+                while True:
+                    ret, bgr = cap.read()
+                    if not ret:
                         break
+                    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
 
-                prev_gray = gray
-                prev_bgr  = bgr
-                fi += 1
+                    if prev_gray is not None and (fi % video_step == 0):
+                        if is_dense:
+                            flow = compute_flow_dense(prev_gray, gray, pyr_scale, levels, winsize,
+                                                       iterations, poly_n, poly_sigma)
+                            p1, p2, p3, p4, stats = make_panels(prev_bgr, bgr, flow,
+                                                                  threshold_factor, arrow_step, "dense")
+                        else:
+                            flow, pts1, pts2 = compute_flow_sparse(
+                                prev_gray, gray, lk_max_corners, lk_quality, lk_min_dist,
+                                lk_block, lk_winsize, lk_levels)
+                            p1, p2, p3, p4, stats = make_panels(prev_bgr, bgr, flow,
+                                                                  threshold_factor, arrow_step, "sparse",
+                                                                  sparse_pts1=pts1, sparse_pts2=pts2)
+                        combined = make_combined([p1, p2, p3, p4])
+                        preview_ph.image(bgr_to_rgb(combined), caption=f"Frame {fi}",
+                                         width="stretch")
+                        results.append({
+                            "frame_idx": fi,
+                            "time_s":    fi / fps,
+                            "p1": p1, "p2": p2, "p3": p3, "p4": p4,
+                            "combined": combined,
+                            "stats": stats,
+                        })
+                        pi += 1
+                        prog_bar.progress(min(pi / frames_to_process, 1.0))
+                        status_ph.markdown(
+                            f'<div class="panel-title">Zpracováno: {pi}/{frames_to_process} '
+                            f'segmentů · Frame {fi}/{total}</div>',
+                            unsafe_allow_html=True,
+                        )
+                        if pi >= frames_to_process:
+                            break
 
-            cap.release()
+                    prev_gray = gray
+                    prev_bgr  = bgr
+                    fi += 1
+            finally:
+                cap.release()
             preview_ph.empty()
             prog_bar.empty()
 
             st.session_state.vid_results   = results
             st.session_state.vid_analyzing = False
-            st.session_state.vid_stop      = False
 
             if results:
                 status_ph.success(f"✅ Hotovo! Zpracováno {len(results)} segmentů.")
@@ -540,9 +535,9 @@ with tab_vid:
             ]:
                 with col:
                     st.markdown(f'<div class="panel-title">{lbl}</div>', unsafe_allow_html=True)
-                    st.image(bgr_to_rgb(panel), use_container_width=True)
+                    st.image(bgr_to_rgb(panel), width="stretch")
         else:
-            st.image(bgr_to_rgb(panel_map[view_mode]), use_container_width=True)
+            st.image(bgr_to_rgb(panel_map[view_mode]), width="stretch")
 
         s = seg["stats"]
         fc1, fc2, fc3, fc4 = st.columns(4)
