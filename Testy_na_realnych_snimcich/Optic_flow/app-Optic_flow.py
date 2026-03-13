@@ -5,17 +5,8 @@ import tempfile
 import os
 import zipfile
 import io
-import signal
-import sys
 from datetime import datetime
 import pandas as pd
-
-# Clean shutdown on Ctrl+C / SIGTERM
-def _shutdown(sig, frame):
-    sys.exit(0)
-
-signal.signal(signal.SIGINT,  _shutdown)
-signal.signal(signal.SIGTERM, _shutdown)
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -71,12 +62,13 @@ def _ss(key, default):
     if key not in st.session_state:
         st.session_state[key] = default
 
-_ss("vid_results",    None)
-_ss("vid_idx",        0)
-_ss("vid_tmp_path",   None)
-_ss("vid_file_id",    None)
-_ss("vid_analyzing",  False)
-_ss("vid_slider",     0)
+_ss("vid_results",       None)
+_ss("vid_idx",           0)
+_ss("vid_tmp_path",      None)
+_ss("vid_file_id",       None)
+_ss("vid_analyzing",     False)
+_ss("vid_slider",        0)
+_ss("selected_frames",   set())
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -339,10 +331,11 @@ with tab_vid:
     if vid_file is not None:
         file_id = vid_file.file_id
         if file_id != st.session_state.vid_file_id:
-            st.session_state.vid_file_id   = file_id
-            st.session_state.vid_results   = None
-            st.session_state.vid_slider    = 0
-            st.session_state.vid_analyzing = False
+            st.session_state.vid_file_id      = file_id
+            st.session_state.vid_results      = None
+            st.session_state.vid_slider       = 0
+            st.session_state.vid_analyzing    = False
+            st.session_state.selected_frames  = set()
             if st.session_state.vid_tmp_path and os.path.exists(st.session_state.vid_tmp_path):
                 try: os.unlink(st.session_state.vid_tmp_path)
                 except: pass
@@ -366,33 +359,83 @@ with tab_vid:
         vc3.metric("Rozlišení", f"{w_vid}×{h_vid}")
         vc4.metric("Délka", f"{total/fps:.1f}s")
 
+        # ── Výběr rozsahu framů ───────────────────────────────────────────────
+        st.markdown('<div class="panel-title">🎯 Rozsah analýzy</div>', unsafe_allow_html=True)
+
+        range_col1, range_col2 = st.columns(2)
+        with range_col1:
+            start_frame = st.number_input(
+                "Od framu", min_value=0, max_value=total - 2,
+                value=0, step=1, key="range_start",
+            )
+        with range_col2:
+            end_frame = st.number_input(
+                "Do framu", min_value=int(start_frame) + 1, max_value=total - 1,
+                value=min(total - 1, int(start_frame) + max_frames * video_step + 1),
+                step=1, key="range_end",
+            )
+
+        start_frame = int(start_frame)
+        end_frame   = int(end_frame)
+        range_frames = end_frame - start_frame
+        est_segments = min(max_frames, max(range_frames // max(video_step, 1), 1))
+
+        st.markdown(
+            f'<div class="panel-title">'
+            f'Rozsah: <span style="color:#00e5ff">{start_frame}</span> – '
+            f'<span style="color:#00e5ff">{end_frame}</span>'
+            f'&nbsp;·&nbsp; {range_frames} framů'
+            f'&nbsp;·&nbsp; {start_frame/fps:.1f}s – {end_frame/fps:.1f}s'
+            f'&nbsp;·&nbsp; odhadované segmenty: <span style="color:#00e5ff">{est_segments}</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+        # Časová osa s vyznačeným rozsahem
+        frac_start = start_frame / max(total - 1, 1)
+        frac_end   = end_frame   / max(total - 1, 1)
+        st.markdown(
+            f'<div style="background:#1a1a24;border-radius:6px;height:10px;position:relative;margin:6px 0 14px">'
+            f'<div style="position:absolute;left:{frac_start*100:.1f}%;width:{(frac_end-frac_start)*100:.1f}%;'
+            f'height:100%;background:linear-gradient(90deg,#7b61ff,#00e5ff);border-radius:6px"></div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
         analyze_btn = st.button("🔍  ANALYZOVAT VIDEO", key="btn_vid",
                                  disabled=st.session_state.vid_analyzing)
 
         if analyze_btn:
-            st.session_state.vid_analyzing = True
-            st.session_state.vid_results   = None
-            st.session_state.vid_slider    = 0
+            st.session_state.vid_analyzing    = True
+            st.session_state.vid_results      = None
+            st.session_state.vid_slider       = 0
+            st.session_state.selected_frames  = set()
 
             cap = cv2.VideoCapture(tmp_path)
+
+            # Přeskočit na start_frame
+            if start_frame > 0:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+
             preview_ph = st.empty()
             prog_bar   = st.progress(0)
             status_ph  = st.empty()
-            frames_to_process = min(max_frames, max(total // max(video_step, 1), 1))
+            frames_to_process = est_segments
 
             results   = []
             prev_gray = None
             prev_bgr  = None
-            fi = 0; pi = 0
+            fi = start_frame  # absolutní číslo framu
+            pi = 0
 
             try:
                 while True:
                     ret, bgr = cap.read()
-                    if not ret:
+                    if not ret or fi > end_frame:
                         break
                     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
 
-                    if prev_gray is not None and (fi % video_step == 0):
+                    if prev_gray is not None and ((fi - start_frame) % video_step == 0):
                         if is_dense:
                             flow = compute_flow_dense(prev_gray, gray, pyr_scale, levels, winsize,
                                                        iterations, poly_n, poly_sigma)
@@ -419,7 +462,7 @@ with tab_vid:
                         prog_bar.progress(min(pi / frames_to_process, 1.0))
                         status_ph.markdown(
                             f'<div class="panel-title">Zpracováno: {pi}/{frames_to_process} '
-                            f'segmentů · Frame {fi}/{total}</div>',
+                            f'segmentů · Frame {fi}/{end_frame}</div>',
                             unsafe_allow_html=True,
                         )
                         if pi >= frames_to_process:
@@ -428,6 +471,10 @@ with tab_vid:
                     prev_gray = gray
                     prev_bgr  = bgr
                     fi += 1
+            except BaseException:
+                # Streamlit StopException nebo jiný signál – uvolnit video a nechat propagovat
+                cap.release()
+                raise
             finally:
                 cap.release()
             preview_ph.empty()
@@ -500,14 +547,26 @@ with tab_vid:
         cur = st.session_state.vid_slider
         seg = results[cur]
 
-        st.markdown(
-            f'<div class="panel-title">'
-            f'Segment <span style="color:#00e5ff">{cur + 1} / {n}</span>'
-            f'&nbsp;·&nbsp; Frame <span style="color:#00e5ff">{seg["frame_idx"]}</span>'
-            f'&nbsp;·&nbsp; Čas <span style="color:#00e5ff">{seg["time_s"]:.2f}s</span>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
+        # Info bar + výběr snímku
+        info_col, sel_col = st.columns([5, 2])
+        with info_col:
+            st.markdown(
+                f'<div class="panel-title">'
+                f'Segment <span style="color:#00e5ff">{cur + 1} / {n}</span>'
+                f'&nbsp;·&nbsp; Frame <span style="color:#00e5ff">{seg["frame_idx"]}</span>'
+                f'&nbsp;·&nbsp; Čas <span style="color:#00e5ff">{seg["time_s"]:.2f}s</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        with sel_col:
+            is_selected = cur in st.session_state.selected_frames
+            label = "✅  Vybráno" if is_selected else "☐  Vybrat tento snímek"
+            def _toggle_frame(idx=cur):
+                if idx in st.session_state.selected_frames:
+                    st.session_state.selected_frames.discard(idx)
+                else:
+                    st.session_state.selected_frames.add(idx)
+            st.button(label, key=f"sel_btn_{cur}", on_click=_toggle_frame, kwargs={"idx": cur})
 
         view_mode = st.radio(
             "Zobrazení", key="vid_view_mode",
@@ -546,6 +605,79 @@ with tab_vid:
         fc3.metric("Průměrná magnituda",   f"{s['avg_magnitude']:.2f}")
         fc4.metric("Max. magnituda",        f"{s['max_magnitude']:.2f}")
 
+        # ── Vybrané snímky ────────────────────────────────────────────────────
+        st.markdown("---")
+        sel = sorted(st.session_state.selected_frames)
+
+        if sel:
+            st.markdown(
+                f'<div class="panel-title">🗂️ Vybrané snímky '
+                f'<span style="color:#00e5ff">({len(sel)})</span></div>',
+                unsafe_allow_html=True,
+            )
+
+            # Miniaturní přehled vybraných
+            cols_per_row = 5
+            rows_sel = [sel[i:i+cols_per_row] for i in range(0, len(sel), cols_per_row)]
+            for row in rows_sel:
+                thumb_cols = st.columns(cols_per_row)
+                for col, idx in zip(thumb_cols, row):
+                    r = results[idx]
+                    with col:
+                        st.image(bgr_to_rgb(r["p1"]), width="stretch")
+                        fi_r = r["frame_idx"]
+                        t_r  = r["time_s"]
+                        st.markdown(
+                            f'<div class="panel-title" style="text-align:center">'
+                            f'F{fi_r} · {t_r:.1f}s</div>',
+                            unsafe_allow_html=True,
+                        )
+                        def _remove(i=idx):
+                            st.session_state.selected_frames.discard(i)
+                        st.button("✕", key=f"rm_{idx}", on_click=_remove, kwargs={"i": idx},
+                                   help="Odebrat z výběru")
+
+            # Akce s vybranými
+            act1, act2, act3 = st.columns(3)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+            with act1:
+                # ZIP pouze vybraných
+                zip_sel = io.BytesIO()
+                with zipfile.ZipFile(zip_sel, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for idx in sel:
+                        r = results[idx]
+                        fi_r = r["frame_idx"]
+                        zf.writestr(f"frame_{fi_r:05d}_combined.png", encode_png(r["combined"]))
+                        zf.writestr(f"frame_{fi_r:05d}_original.png", encode_png(r["p1"]))
+                        zf.writestr(f"frame_{fi_r:05d}_flow.png",     encode_png(r["p2"]))
+                        zf.writestr(f"frame_{fi_r:05d}_pohyb.png",    encode_png(r["p3"]))
+                        zf.writestr(f"frame_{fi_r:05d}_sipky.png",    encode_png(r["p4"]))
+                zip_sel.seek(0)
+                st.download_button(
+                    f"⬇️  Stáhnout vybrané ({len(sel)}) ZIP",
+                    data=zip_sel,
+                    file_name=f"vybrane_snimky_{ts}.zip",
+                    mime="application/zip", key="dl_selected",
+                )
+
+            with act2:
+                if st.button("🗑️  Zrušit výběr", key="clear_sel"):
+                    st.session_state.selected_frames.clear()
+
+            with act3:
+                if st.button("✅  Vybrat vše", key="sel_all"):
+                    for i in range(n):
+                        st.session_state.selected_frames.add(i)
+
+        else:
+            st.markdown(
+                '<div class="panel-title" style="color:#3a3a52">Žádné snímky nejsou vybrány — '
+                'použij tlačítko ☐ Vybrat tento snímek</div>',
+                unsafe_allow_html=True,
+            )
+
+        # ── Stažení všech ─────────────────────────────────────────────────────
         st.markdown("---")
         dl1, dl2 = st.columns(2)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")

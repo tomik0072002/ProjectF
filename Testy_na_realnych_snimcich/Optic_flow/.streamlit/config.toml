@@ -1,0 +1,7 @@
+[server]
+# Okamžitě ukončit bez čekání na cleanup
+headless = false
+
+[runner]
+# Zkrátit timeout na minimum
+fastReruns = true
