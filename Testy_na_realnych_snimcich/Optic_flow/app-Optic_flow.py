@@ -8,9 +8,6 @@ import io
 from datetime import datetime
 
 
-# Tlačítka na přepínání snímků nefungují...
-# Kombinovaný pohled na snímek (ten je v pořádku) ale pod ním se vytváří "jeho stín", který je tam navíc
-
 # Nastavení stránky
 st.set_page_config(
     page_title="Optical Flow Analyzer",
