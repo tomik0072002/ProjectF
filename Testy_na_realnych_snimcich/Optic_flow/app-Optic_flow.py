@@ -69,6 +69,8 @@ _ss("vid_file_id",       None)
 _ss("vid_analyzing",     False)
 _ss("vid_slider",        0)
 _ss("selected_frames",   set())
+_ss("img_frame1",        None)
+_ss("img_frame2",        None)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -246,7 +248,7 @@ tab_img, tab_vid = st.tabs(["🖼️  OBRAZY", "🎬  VIDEO"])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 1 – IMAGES
+# TAB 1 – IMAGES  (live – přepočítává se automaticky při změně parametrů)
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_img:
     c1, c2 = st.columns(2)
@@ -256,8 +258,8 @@ with tab_img:
                                key="img1", label_visibility="collapsed")
         if f1:
             img1_np = np.frombuffer(f1.read(), np.uint8)
-            frame1 = cv2.imdecode(img1_np, cv2.IMREAD_COLOR)
-            st.image(bgr_to_rgb(frame1), width="stretch")
+            st.session_state.img_frame1 = cv2.imdecode(img1_np, cv2.IMREAD_COLOR)
+            st.image(bgr_to_rgb(st.session_state.img_frame1), width="stretch")
 
     with c2:
         st.markdown('<div class="panel-title">📷 Snímek 2 (cílový)</div>', unsafe_allow_html=True)
@@ -265,58 +267,60 @@ with tab_img:
                                key="img2", label_visibility="collapsed")
         if f2:
             img2_np = np.frombuffer(f2.read(), np.uint8)
-            frame2 = cv2.imdecode(img2_np, cv2.IMREAD_COLOR)
-            st.image(bgr_to_rgb(frame2), width="stretch")
+            st.session_state.img_frame2 = cv2.imdecode(img2_np, cv2.IMREAD_COLOR)
+            st.image(bgr_to_rgb(st.session_state.img_frame2), width="stretch")
 
-    if f1 and f2:
-        if st.button("🔍  ANALYZOVAT POHYB", key="btn_img"):
-            with st.spinner("Počítám optical flow…"):
-                if frame1.shape != frame2.shape:
-                    frame2 = cv2.resize(frame2, (frame1.shape[1], frame1.shape[0]))
-                g1 = cv2.cvtColor(frame1, cv2.COLOR_BGR2GRAY)
-                g2 = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
-                if is_dense:
-                    flow = compute_flow_dense(g1, g2, pyr_scale, levels, winsize,
-                                              iterations, poly_n, poly_sigma)
-                    p1, p2, p3, p4, stats = make_panels(frame1, frame2, flow,
-                                                         threshold_factor, arrow_step, "dense")
-                else:
-                    flow, pts1, pts2 = compute_flow_sparse(g1, g2, lk_max_corners, lk_quality,
-                                                            lk_min_dist, lk_block, lk_winsize, lk_levels)
-                    p1, p2, p3, p4, stats = make_panels(frame1, frame2, flow,
-                                                         threshold_factor, arrow_step, "sparse",
-                                                         sparse_pts1=pts1, sparse_pts2=pts2)
+    # Automatická analýza – spustí se kdykoliv jsou oba snímky k dispozici
+    frame1 = st.session_state.get("img_frame1")
+    frame2 = st.session_state.get("img_frame2")
 
-            st.markdown("---")
-            st.markdown('<div class="panel-title">📊 Statistiky pohybu</div>', unsafe_allow_html=True)
-            mc1, mc2, mc3, mc4 = st.columns(4)
-            mc1.metric("Pohybující se pixely", f"{stats['moving_pixels']:,}")
-            mc2.metric("Pokrytí pohybem",      f"{stats['coverage_pct']:.1f}%")
-            mc3.metric("Průměrná magnituda",   f"{stats['avg_magnitude']:.2f}")
-            mc4.metric("Max. magnituda",        f"{stats['max_magnitude']:.2f}")
+    if frame1 is not None and frame2 is not None:
+        if frame1.shape != frame2.shape:
+            frame2 = cv2.resize(frame2, (frame1.shape[1], frame1.shape[0]))
+        g1 = cv2.cvtColor(frame1, cv2.COLOR_BGR2GRAY)
+        g2 = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
+        if is_dense:
+            flow = compute_flow_dense(g1, g2, pyr_scale, levels, winsize,
+                                      iterations, poly_n, poly_sigma)
+            p1, p2, p3, p4, stats = make_panels(frame1, frame2, flow,
+                                                 threshold_factor, arrow_step, "dense")
+        else:
+            flow, pts1, pts2 = compute_flow_sparse(g1, g2, lk_max_corners, lk_quality,
+                                                    lk_min_dist, lk_block, lk_winsize, lk_levels)
+            p1, p2, p3, p4, stats = make_panels(frame1, frame2, flow,
+                                                 threshold_factor, arrow_step, "sparse",
+                                                 sparse_pts1=pts1, sparse_pts2=pts2)
 
-            st.markdown("---")
-            st.markdown('<div class="panel-title">🔬 Výsledky analýzy</div>', unsafe_allow_html=True)
-            row1, row2 = st.columns(2), st.columns(2)
-            for i, (panel, label) in enumerate(zip(
-                    [p1, p2, p3, p4],
-                    ["Originál", "Flow mapa (HSV)", "Pohybující se oblasti", "Šipky pohybu"])):
-                with [row1, row2][i // 2][i % 2]:
-                    st.markdown(f'<div class="panel-title">{label}</div>', unsafe_allow_html=True)
-                    st.image(bgr_to_rgb(panel), width="stretch")
+        st.markdown("---")
+        st.markdown('<div class="panel-title">📊 Statistiky pohybu</div>', unsafe_allow_html=True)
+        mc1, mc2, mc3, mc4 = st.columns(4)
+        mc1.metric("Pohybující se pixely", f"{stats['moving_pixels']:,}")
+        mc2.metric("Pokrytí pohybem",      f"{stats['coverage_pct']:.1f}%")
+        mc3.metric("Průměrná magnituda",   f"{stats['avg_magnitude']:.2f}")
+        mc4.metric("Max. magnituda",        f"{stats['max_magnitude']:.2f}")
 
-            combined = make_combined([p1, p2, p3, p4])
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            zip_buf = io.BytesIO()
-            with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                for panel, lbl in zip([p1, p2, p3, p4],
-                                       ["original", "flow_mapa", "pohyb_oblasti", "sipky"]):
-                    zf.writestr(f"{ts}_{lbl}.png", encode_png(panel))
-                zf.writestr(f"{ts}_combined.png", encode_png(combined))
-            zip_buf.seek(0)
-            st.markdown("---")
-            st.download_button("⬇️  Stáhnout výsledky (ZIP)", data=zip_buf,
-                                file_name=f"optical_flow_{ts}.zip", mime="application/zip")
+        st.markdown("---")
+        st.markdown('<div class="panel-title">🔬 Výsledky analýzy</div>', unsafe_allow_html=True)
+        row1, row2 = st.columns(2), st.columns(2)
+        for i, (panel, label) in enumerate(zip(
+                [p1, p2, p3, p4],
+                ["Originál", "Flow mapa (HSV)", "Pohybující se oblasti", "Šipky pohybu"])):
+            with [row1, row2][i // 2][i % 2]:
+                st.markdown(f'<div class="panel-title">{label}</div>', unsafe_allow_html=True)
+                st.image(bgr_to_rgb(panel), width="stretch")
+
+        combined = make_combined([p1, p2, p3, p4])
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        zip_buf = io.BytesIO()
+        with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for panel, lbl in zip([p1, p2, p3, p4],
+                                   ["original", "flow_mapa", "pohyb_oblasti", "sipky"]):
+                zf.writestr(f"{ts}_{lbl}.png", encode_png(panel))
+            zf.writestr(f"{ts}_combined.png", encode_png(combined))
+        zip_buf.seek(0)
+        st.markdown("---")
+        st.download_button("⬇️  Stáhnout výsledky (ZIP)", data=zip_buf,
+                            file_name=f"optical_flow_{ts}.zip", mime="application/zip")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
