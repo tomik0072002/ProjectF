@@ -1,0 +1,18 @@
+[theme]
+# Základní režim (může být "light" pro světlý nebo "dark" pro tmavý)
+base="light"
+
+# Primární barva (použije se pro tlačítka, načítací proužek, slidery)
+primaryColor="#0068c9"
+
+# Barva pozadí hlavní plochy aplikace
+backgroundColor="#ffffff"
+
+# Barva pozadí postranního panelu (sidebar) a podkresových prvků
+secondaryBackgroundColor="#f0f2f6"
+
+# Hlavní barva textu
+textColor="#31333F"
+
+# Typ písma (podporované možnosti: "sans serif", "serif", "monospace")
+font="sans serif"
