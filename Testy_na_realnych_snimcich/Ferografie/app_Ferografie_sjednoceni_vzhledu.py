@@ -53,12 +53,12 @@ def get_mask(img: np.ndarray,
     dilated = cv2.dilate(canny, k_conn, iterations=dilate_iter)
 
     contours_c, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    mask_metal = np.zeros_like(gray)
-    cv2.drawContours(mask_metal, contours_c, -1, 255, thickness=cv2.FILLED)
+    edges = np.zeros_like(gray)
+    cv2.drawContours(edges, contours_c, -1, 255, thickness=cv2.FILLED)
 
-    _, mask_dark = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    _, mask_otsu = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
-    combined = cv2.bitwise_or(mask_metal, mask_dark)
+    combined = cv2.bitwise_or(edges, mask_otsu)
 
     k_clean = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (clean_kernel, clean_kernel))
     final = cv2.morphologyEx(combined, cv2.MORPH_OPEN, k_clean, iterations=clean_iter)
