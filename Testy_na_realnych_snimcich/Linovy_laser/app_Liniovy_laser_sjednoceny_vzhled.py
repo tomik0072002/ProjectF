@@ -283,14 +283,14 @@ with st.sidebar:
     file_path = st.text_input("Cesta k souboru (.npy)", value="./OUT/kamera_251.npy")
     file_name = Path(file_path).stem.replace("kamera_", "") if file_path else "?"
 
-    with st.expander("✂️ Oříznutí obrazu (ROI)", expanded=False):
+    with st.expander("Oříznutí obrazu (ROI)", expanded=False):
         st.caption("Omezí výpočet pouze na určitou část senzoru")
         crop_t = st.number_input("Shora [px]", 0, step=10)
         crop_b = st.number_input("Zdola [px]", 0, step=10)
         crop_l = st.number_input("Zleva [px]", 0, step=10)
         crop_r = st.number_input("Zprava [px]", 0, step=10)
 
-    with st.expander("🎨 Korekce a Filtry (2D)", expanded=False):
+    with st.expander("Korekce a Filtry (2D)", expanded=False):
         st.caption("Úpravy samotného snímku před detekcí")
         alpha = st.slider("Kontrast (Alpha)", 0.5, 3.0, 1.0, 0.1)
         beta = st.slider("Jas (Beta)", -100, 100, 0, 5)
@@ -303,7 +303,7 @@ with st.sidebar:
         morph_k = st.slider("Velikost morfologie (Kernel)", 1, 15, 3, 2,
                             help="Aktivní pouze pokud vyberete operaci") if morph_op != 'Žádná' else 1
 
-    with st.expander("🔍 Detekce Laseru", expanded=True):
+    with st.expander("Detekce Laseru", expanded=True):
         st.caption("Parametry pro nalezení středu čáry")
         laser_axis = st.selectbox("Osa laseru", options=[0, 1],
                                   format_func=lambda x: "0 - Horizontálně" if x == 0 else "1 - Vertikálně")
@@ -321,6 +321,7 @@ with st.sidebar:
         max_value = st.slider("Ignorovat vzdálenost větší než [px]", 0, 3000, 0, 10, help="0 = Neomezeno")
 
     st.markdown("---")
+
     # Vizualizace
     st.markdown("**Vizualizace**")
     colormap = st.selectbox("Barvová mapa", ['magma', 'viridis', 'plasma', 'jet', 'inferno', 'gray'])
