@@ -395,21 +395,44 @@ else:
 st.markdown("---")
 
 if show_preprocessing:
-    st.markdown("###  Vizuální pipeline: Předzpracování")
-    # Přepočet pouze pro vizualizaci
+    st.markdown("###  Vizuální pipeline: Předzpracování a vliv na detekci")
+
     gray_img = cv2.cvtColor(adjusted_img, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray_img, (params["blur_kernel"], params["blur_kernel"]), 0)
 
-    p1, p2, p3 = st.columns(3)
+    # Vygenerujeme Cannyho hrany BEZ rozostření (abychom ukázali, jak je to špatné)
+    canny_without_blur = cv2.Canny(gray_img, used_t1, used_t2)
+    # Canny hrany S rozostřením (to, co reálně používáme)
+    canny_with_blur = cv2.Canny(blurred, used_t1, used_t2)
+
+    # První řádek: Ukázka samotného filtru
+    p1, p2 = st.columns(2)
     with p1:
-        st.markdown("<div style='text-align: center; font-weight: bold; margin-bottom: 10px;'>1. Vstupní snímek</div>", unsafe_allow_html=True)
-        st.image(cv2.cvtColor(adjusted_img, cv2.COLOR_BGR2RGB), use_container_width=True)
-    with p2:
-        st.markdown("<div style='text-align: center; font-weight: bold; margin-bottom: 10px;'>2. Stupně šedi</div>", unsafe_allow_html=True)
+        st.markdown(
+            "<div style='text-align: center; font-weight: bold; margin-bottom: 10px;'>1. Snímek bez filtrace (Stupně šedi)</div>",
+            unsafe_allow_html=True)
         st.image(gray_img, clamp=True, use_container_width=True)
-    with p3:
-        st.markdown(f"<div style='text-align: center; font-weight: bold; margin-bottom: 10px;'>3. Gaussovo rozostření (Kernel {params['blur_kernel']}x{params['blur_kernel']})</div>", unsafe_allow_html=True)
+    with p2:
+        st.markdown(
+            f"<div style='text-align: center; font-weight: bold; margin-bottom: 10px;'>2. Aplikace Gaussova filtru (Kernel {params['blur_kernel']}x{params['blur_kernel']})</div>",
+            unsafe_allow_html=True)
         st.image(blurred, clamp=True, use_container_width=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # Druhý řádek: Důkaz nutnosti filtru na hranovém detektoru
+    p3, p4 = st.columns(2)
+    with p3:
+        st.markdown(
+            "<div style='text-align: center; font-weight: bold; margin-bottom: 10px; color: #ff4b4b;'>3. Detekce hran BEZ předzpracování (chyby)</div>",
+            unsafe_allow_html=True)
+        st.image(canny_without_blur, clamp=True, use_container_width=True)
+    with p4:
+        st.markdown(
+            "<div style='text-align: center; font-weight: bold; margin-bottom: 10px; color: #00cc66;'>4. Detekce hran S předzpracováním (správně)</div>",
+            unsafe_allow_html=True)
+        st.image(canny_with_blur, clamp=True, use_container_width=True)
+
     st.markdown("---")
 
 if show_debug:
