@@ -4,8 +4,6 @@ import cv2
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
-from matplotlib.patches import FancyArrowPatch
 import streamlit as st
 from typing import Dict, Optional, Any
 
@@ -16,58 +14,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── Globální CSS pro kompaktnější UI ──────────────────────────────────────────
-st.markdown("""
-<style>
-/* Zmenšení mezer mezi sekcemi */
-.block-container { padding-top: 1.2rem !important; padding-bottom: 1rem !important; }
-div[data-testid="stVerticalBlock"] > div { gap: 0.4rem; }
-
-/* Popisky nad obrázky – overlay styl */
-.img-label {
-    font-size: 0.72rem;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: #94a3b8;
-    text-align: center;
-    margin-bottom: 4px;
-}
-
-/* Metriky – tighter */
-div[data-testid="metric-container"] { padding: 0.5rem 0.6rem !important; }
-div[data-testid="metric-container"] label { font-size: 0.68rem !important; }
-div[data-testid="metric-container"] div[data-testid="stMetricValue"] {
-    font-size: 1.1rem !important;
-}
-
-/* Oddělovač */
-hr { margin: 0.6rem 0 !important; border-color: rgba(148,163,184,0.15) !important; }
-
-/* Sidebar nadpisy */
-.sidebar-section {
-    font-size: 0.7rem;
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: #64748b;
-    margin: 0.8rem 0 0.2rem 0;
-}
-</style>
-""", unsafe_allow_html=True)
-
-
-# ── Paleta pro grafy ──────────────────────────────────────────────────────────
-CHART_BG      = "#0f172a"   # téměř černá
-CHART_SURFACE = "#1e293b"   # tmavě modrošedá
-GRID_COLOR    = "#334155"
-TEXT_COLOR    = "#94a3b8"
-ACCENT_BLUE   = "#38bdf8"
-ACCENT_ORANGE = "#fb923c"
-ACCENT_GREEN  = "#4ade80"
-BAR_COLOR     = "#0ea5e9"
-BAR_EDGE      = "#1e40af"
-
 
 #  Pomocné funkce pro detekci hran a částic
 
@@ -76,6 +22,7 @@ def auto_canny_thresholds(blurred: np.ndarray, sigma: float = 0.33):
     p_high = np.percentile(blurred, 90)
     t1 = int(max(0, p_low * (1.0 - sigma)))
     t2 = int(min(255, p_high * (1.0 - sigma)))
+
     t1 = min(t1, 50)
     t2 = max(t2, t1 + 30)
     t2 = min(t2, 200)
@@ -110,6 +57,7 @@ def get_mask(img: np.ndarray,
     cv2.drawContours(edges, contours_c, -1, 255, thickness=cv2.FILLED)
 
     _, mask_otsu = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
     combined = cv2.bitwise_or(edges, mask_otsu)
 
     k_clean = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (clean_kernel, clean_kernel))
@@ -140,7 +88,8 @@ def analyze_shape(contour: np.ndarray,
 
     equiv_diam_px = np.sqrt(4 * area_px / np.pi)
 
-    def px2(p):   return p / px_per_mm
+    def px2(p): return p / px_per_mm
+
     def px2_area(p): return p / (px_per_mm ** 2)
 
     return {
@@ -188,6 +137,7 @@ def run_analysis(img, params):
 
     for i, cnt in enumerate(contours):
         s = analyze_shape(cnt, min_area_px, px_per_mm)
+
         if s is None or s["circularity"] < min_circularity:
             continue
 
@@ -243,130 +193,58 @@ def df_to_excel_bytes(df: pd.DataFrame) -> bytes:
     return buf.read()
 
 
-def _style_ax(ax, title: str = "", xlabel: str = "", ylabel: str = ""):
-    """Aplikuje jednotný dark styl na osu."""
-    ax.set_facecolor(CHART_SURFACE)
-    ax.tick_params(colors=TEXT_COLOR, labelsize=8)
-    ax.xaxis.label.set_color(TEXT_COLOR)
-    ax.yaxis.label.set_color(TEXT_COLOR)
-    ax.title.set_color(TEXT_COLOR)
-    for spine in ax.spines.values():
-        spine.set_edgecolor(GRID_COLOR)
-    ax.grid(axis="y", color=GRID_COLOR, linewidth=0.5, linestyle="--", alpha=0.6)
-    ax.set_axisbelow(True)
-    if title:   ax.set_title(title, fontsize=9, fontweight="bold", pad=6, color=TEXT_COLOR)
-    if xlabel:  ax.set_xlabel(xlabel, fontsize=8)
-    if ylabel:  ax.set_ylabel(ylabel, fontsize=8)
-
-
 def make_histogram_fig(df: pd.DataFrame, unit: str) -> plt.Figure:
-    col_diam = f"Ekv. průměr ({unit})"
-    col_circ = "Kruhovitost"
-    col_ar   = "Poměr stran"
+    col = f"Ekv. průměr ({unit})"
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4))
 
-    # 3 grafy ve 2 řadách: [diam | circ] a [ar | scatter diam vs circ]
-    fig = plt.figure(figsize=(12, 7), facecolor=CHART_BG)
-    gs = gridspec.GridSpec(2, 2, figure=fig, hspace=0.45, wspace=0.32,
-                           left=0.07, right=0.97, top=0.93, bottom=0.08)
+    # Průhledné pozadí grafu pro přizpůsobení se Streamlit tématu
+    fig.patch.set_alpha(0.0)
+    for ax in axes:
+        ax.set_facecolor("none")
+        # Neutrální barva textu os, aby byla vidět na světlém i tmavém pozadí
+        ax.tick_params(colors="gray")
+        ax.xaxis.label.set_color("gray")
+        ax.yaxis.label.set_color("gray")
+        ax.title.set_color("gray")
+        for spine in ax.spines.values():
+            spine.set_edgecolor("gray")
 
-    ax1 = fig.add_subplot(gs[0, 0])
-    ax2 = fig.add_subplot(gs[0, 1])
-    ax3 = fig.add_subplot(gs[1, 0])
-    ax4 = fig.add_subplot(gs[1, 1])
+    if col in df.columns and len(df) > 0:
+        data = df[col]
+        # Barvy sloupců přizpůsobené pro dobrou viditelnost
+        axes[0].hist(data, bins=min(25, len(df)), color="#4fc3f7", edgecolor="gray", linewidth=0.4, alpha=0.8)
+        axes[0].axvline(data.mean(), color="#ff7043", lw=1.5, ls="--", label=f"Průměr {data.mean():.3f}")
+        axes[0].axvline(data.median(), color="#66bb6a", lw=1.5, ls=":", label=f"Medián {data.median():.3f}")
+        axes[0].set_xlabel(f"Ekvivalentní průměr ({unit})")
+        axes[0].set_ylabel("Počet")
+        axes[0].set_title("Distribuce velikostí")
+        axes[0].legend(fontsize=8, framealpha=0.2)
 
-    for ax in (ax1, ax2, ax3, ax4):
-        _style_ax(ax)
+        circ = df["Kruhovitost"]
+        axes[1].hist(circ, bins=min(20, len(df)), color="#4fc3f7", edgecolor="gray", linewidth=0.4, alpha=0.8)
+        axes[1].axvline(circ.mean(), color="#ff7043", lw=1.5, ls="--", label=f"Průměr {circ.mean():.3f}")
+        axes[1].set_xlabel("Kruhovitost (0–1)")
+        axes[1].set_ylabel("Počet")
+        axes[1].set_title("Distribuce kruhovitosti")
+        axes[1].legend(fontsize=8, framealpha=0.2)
 
-    if len(df) > 0:
-        # ── 1. Distribuce ekvivalentního průměru ─────────────────────────────
-        data_d = df[col_diam]
-        n_bins = min(25, max(5, len(df) // 2))
-        counts, edges, patches = ax1.hist(
-            data_d, bins=n_bins,
-            color=BAR_COLOR, edgecolor=BAR_EDGE, linewidth=0.4, alpha=0.85
-        )
-        # Gradient efekt – tmavší okraje
-        for patch in patches:
-            patch.set_alpha(0.85)
-
-        mean_d = data_d.mean()
-        med_d  = data_d.median()
-        ymax   = counts.max() * 1.12
-        ax1.axvline(mean_d, color=ACCENT_ORANGE, lw=1.5, ls="--", zorder=5)
-        ax1.axvline(med_d,  color=ACCENT_GREEN,  lw=1.5, ls=":",  zorder=5)
-        ax1.set_ylim(0, ymax)
-        ax1.text(mean_d, ymax * 0.92, f"μ={mean_d:.3f}", color=ACCENT_ORANGE,
-                 fontsize=7, ha="left", va="top", fontweight="bold")
-        ax1.text(med_d,  ymax * 0.78, f"med={med_d:.3f}", color=ACCENT_GREEN,
-                 fontsize=7, ha="left", va="top", fontweight="bold")
-        _style_ax(ax1,
-                  title="Distribuce ekvivalentního průměru",
-                  xlabel=f"Ekv. průměr ({unit})",
-                  ylabel="Počet částic")
-
-        # ── 2. Distribuce kruhovitosti ────────────────────────────────────────
-        circ = df[col_circ]
-        ax2.hist(circ, bins=min(20, max(5, len(df) // 2)),
-                 color=ACCENT_BLUE, edgecolor="#0369a1", linewidth=0.4, alpha=0.85)
-        mean_c = circ.mean()
-        ax2.axvline(mean_c, color=ACCENT_ORANGE, lw=1.5, ls="--")
-        ax2.text(mean_c, ax2.get_ylim()[1] * 0.02 if ax2.get_ylim()[1] > 0 else 0.02,
-                 f"μ={mean_c:.3f}", color=ACCENT_ORANGE, fontsize=7,
-                 ha="left", va="bottom", fontweight="bold")
-        _style_ax(ax2,
-                  title="Distribuce kruhovitosti",
-                  xlabel="Kruhovitost (0–1)",
-                  ylabel="Počet částic")
-        ax2.set_xlim(0, 1.05)
-
-        # ── 3. Distribuce poměru stran ────────────────────────────────────────
-        ar_data = df[col_ar]
-        ax3.hist(ar_data, bins=min(20, max(5, len(df) // 2)),
-                 color="#a78bfa", edgecolor="#6d28d9", linewidth=0.4, alpha=0.85)
-        mean_ar = ar_data.mean()
-        ax3.axvline(mean_ar, color=ACCENT_ORANGE, lw=1.5, ls="--")
-        ax3.text(mean_ar, ax3.get_ylim()[1] * 0.02 if ax3.get_ylim()[1] > 0 else 0.02,
-                 f"μ={mean_ar:.2f}", color=ACCENT_ORANGE, fontsize=7,
-                 ha="left", va="bottom", fontweight="bold")
-        _style_ax(ax3,
-                  title="Distribuce poměru stran",
-                  xlabel="Poměr stran (délka/šířka)",
-                  ylabel="Počet částic")
-
-        # ── 4. Scatter: průměr vs kruhovitost ─────────────────────────────────
-        sc = ax4.scatter(
-            data_d, circ,
-            c=df[col_ar], cmap="plasma",
-            s=18, alpha=0.75, linewidths=0.3, edgecolors=CHART_BG,
-            zorder=3
-        )
-        cbar = fig.colorbar(sc, ax=ax4, pad=0.02)
-        cbar.ax.tick_params(colors=TEXT_COLOR, labelsize=7)
-        cbar.set_label("Poměr stran", color=TEXT_COLOR, fontsize=7)
-        cbar.outline.set_edgecolor(GRID_COLOR)
-        ax4.set_xlim(left=0)
-        ax4.set_ylim(0, 1.05)
-        _style_ax(ax4,
-                  title="Průměr vs Kruhovitost (barva = poměr stran)",
-                  xlabel=f"Ekv. průměr ({unit})",
-                  ylabel="Kruhovitost")
-
+    plt.tight_layout()
     return fig
 
 
-#  Sidebar ────────────────────────────────────────────────────────────────────
+#  Sidebar
 
 with st.sidebar:
-    st.markdown("## ⚙ Ferografie")
+    st.markdown("##  Ferografie")
     st.markdown("---")
 
     uploaded_file = st.file_uploader(
-        "Nahrát snímek (PNG / JPG)",
+        " Nahrát snímek (PNG / JPG)",
         type=["png", "jpg", "jpeg"]
     )
 
     st.markdown("---")
-    st.markdown('<p class="sidebar-section">Kalibrace</p>', unsafe_allow_html=True)
+    st.markdown("###  Kalibrace")
     px_per_mm = st.number_input(
         "Rozlišení (px / mm)",
         min_value=0.1, max_value=50000.0,
@@ -375,53 +253,58 @@ with st.sidebar:
     unit = st.selectbox("Jednotka výstupu", ["mm", "µm"], index=0)
 
     st.markdown("---")
-    st.markdown('<p class="sidebar-section">Předzpracování obrazu</p>', unsafe_allow_html=True)
-    brightness = st.slider("Jas", -100, 100, 0, 5)
-    contrast   = st.slider("Kontrast", 0.5, 3.0, 1.0, 0.1)
-    blur_kernel = st.slider("Gaussovo rozostření (px)", 1, 15, 5, 2)
+    st.markdown("###  Předzpracování obrazu")
+    brightness = st.slider("Jas (Brightness)", -100, 100, 0, 5)
+    contrast = st.slider("Kontrast (Contrast)", 0.5, 3.0, 1.0, 0.1)
+    blur_kernel = st.slider("Gaussovo rozostření (px)", 1, 15, 5, 2,
+                            help="Vyšší hodnota odstraní šum, ale může smazat drobné částice.")
 
     st.markdown("---")
-    st.markdown('<p class="sidebar-section">Canny – detekce hran</p>', unsafe_allow_html=True)
+    st.markdown("###  Canny – detekce hran")
     canny_auto = st.toggle("Automatické prahy", value=True)
     if canny_auto:
-        canny_sigma = st.slider("Citlivost (sigma)", 0.05, 0.8, 0.33, 0.01)
+        canny_sigma = st.slider(
+            "Citlivost (sigma)", 0.05, 0.8, 0.33, 0.01,
+            help="Menší hodnota = přísnější detekce hran"
+        )
         canny_t1, canny_t2 = 0, 0
     else:
         canny_sigma = 0.33
         canny_t1 = st.slider("Canny T1 (dolní práh)", 0, 254, 10)
         canny_t2 = st.slider("Canny T2 (horní práh)", canny_t1 + 1, 255, 100)
 
-    st.markdown('<p class="sidebar-section">Dilatace</p>', unsafe_allow_html=True)
-    dilate_kernel = st.slider("Kernel dilatace (px)", 3, 25, 9, 2)
-    dilate_iter   = st.slider("Iterace dilatace", 1, 5, 2)
+    st.markdown("###  Dilatace (propojení hran)")
+    dilate_kernel = st.slider("Velikost kernelu dilatace (px)", 3, 25, 9, 2)
+    dilate_iter = st.slider("Počet iterací dilatace", 1, 5, 2)
 
-    st.markdown('<p class="sidebar-section">Čištění masky</p>', unsafe_allow_html=True)
-    clean_kernel = st.slider("Kernel čištění (px)", 1, 11, 3, 2)
-    clean_iter   = st.slider("Iterace čištění", 1, 5, 2)
+    st.markdown("###  Čištění masky")
+    clean_kernel = st.slider("Velikost kernelu čištění (px)", 1, 11, 3, 2)
+    clean_iter = st.slider("Počet iterací čištění", 1, 5, 2)
 
     st.markdown("---")
-    st.markdown('<p class="sidebar-section">Filtrace částic</p>', unsafe_allow_html=True)
+    st.markdown("###  Filtrace částic")
     min_area_mm2 = st.number_input(
         "Minimální plocha (mm²)",
         min_value=0.0001, max_value=100.0,
         value=0.005, step=0.001, format="%.4f"
     )
-    min_circularity = st.slider("Min. kruhovitost", 0.0, 1.0, 0.0, 0.05)
+    min_circularity = st.slider("Minimální kruhovitost", 0.0, 1.0, 0.0, 0.05,
+                                help="0 = všechny tvary, 1 = pouze dokonalé kruhy")
 
     st.markdown("---")
-    st.markdown('<p class="sidebar-section">Zobrazení</p>', unsafe_allow_html=True)
-    show_mask      = st.toggle("Zobrazit masku", value=True)
-    show_table     = st.toggle("Zobrazit tabulku dat", value=True)
+    st.markdown("###  Zobrazení")
+    show_mask = st.toggle("Zobrazit masku", value=True)
+    show_table = st.toggle("Zobrazit tabulku dat", value=True)
     show_histograms = st.toggle("Zobrazit histogramy", value=True)
-    highlight_max  = st.toggle("Zvýraznit maxima v tabulce", value=True)
-    show_debug     = st.toggle("Mezikroky výsledné masky", value=False)
+    highlight_max = st.toggle("Zvýraznit maxima v tabulce", value=True)
+    show_debug = st.toggle(" Mezikroky výsledné masky", value=False)
 
-#  Hlavní obsah ───────────────────────────────────────────────────────────────
+#  Hlavní obsah aplikace
 
-st.title("Analýza ferografických snímků")
+st.title(" Analýza ferografických snímků")
 
 if uploaded_file is None:
-    st.info("Nahrajte snímek v levém panelu pro zahájení analýzy.")
+    st.info("  Nahrajte snímek v levém panelu pro zahájení analýzy.")
     st.stop()
 
 
@@ -456,14 +339,13 @@ def cached_analysis(img_bytes: bytes, params_key: str):
     return run_analysis(_img, _p)
 
 
-img_bytes  = uploaded_file.getvalue()
+img_bytes = uploaded_file.getvalue()
 params_key = json.dumps(params, sort_keys=True)
 
-with st.spinner("Zpracovávám obraz…"):
+with st.spinner(" Zpracovávám obraz…"):
     adjusted_img, annotated, mask, df, used_t1, used_t2 = cached_analysis(img_bytes, params_key)
 
-# ── Metriky ───────────────────────────────────────────────────────────────────
-st.markdown("#### Přehled výsledků")
+st.markdown("###  Přehled výsledků")
 m1, m2, m3, m4, m5, m6 = st.columns(6)
 
 n = len(df)
@@ -471,120 +353,135 @@ m1.metric("Celkem částic", n)
 if n > 0:
     ecol = f"Ekv. průměr ({unit})"
     acol = f"Plocha ({unit}²)"
-    m2.metric(f"Průměr Ø ({unit})",    f"{df[ecol].mean():.3f}")
-    m3.metric(f"Medián Ø ({unit})",    f"{df[ecol].median():.3f}")
-    m4.metric(f"Prům. plocha ({unit}²)", f"{df[acol].mean():.4f}")
-    m5.metric("Prům. kruhovitost",      f"{df['Kruhovitost'].mean():.3f}")
-    m6.metric("Canny T1 / T2",          f"{used_t1} / {used_t2}")
+    m2.metric(f"Průměr ekv. Ø ({unit})", f"{df[ecol].mean():.2f}")
+    m3.metric(f"Medián ekv. Ø ({unit})", f"{df[ecol].median():.2f}")
+    m4.metric(f"Průměr plochy ({unit}²)", f"{df[acol].mean():.2f}")
+    m5.metric("Průměr kruhovitosti", f"{df['Kruhovitost'].mean():.2f}")
+    m6.metric("Canny T1 / T2", f"{used_t1} / {used_t2}")
 else:
     for col, lbl in zip([m2, m3, m4, m5, m6],
-                        [f"Průměr Ø ({unit})", f"Medián Ø ({unit})",
-                         f"Prům. plocha ({unit}²)", "Prům. kruhovitost", "Canny T1 / T2"]):
+                        [f"Průměr ekv. Ø ({unit})", f"Medián ekv. Ø ({unit})", f"Průměr plochy ({unit}²)",
+                         "Průměr kruhovitosti", "Canny T1 / T2"]):
         col.metric(lbl, "—")
 
 st.markdown("---")
 
-# ── Snímky – kompaktní zobrazení ─────────────────────────────────────────────
-IMG_HEIGHT = 280   # px – výška náhledu; lze změnit dle potřeby
-
 if show_mask:
     c1, c2, c3 = st.columns(3)
-    cols_imgs = [(c1, cv2.cvtColor(adjusted_img, cv2.COLOR_BGR2RGB), "Upravený snímek"),
-                 (c2, mask,                                           "Detekční maska"),
-                 (c3, cv2.cvtColor(annotated,    cv2.COLOR_BGR2RGB), "Anotovaný výsledek")]
+    with c1:
+        st.markdown("<div style='text-align: center; font-weight: bold; margin-bottom: 10px;'>Upravený snímek</div>",
+                    unsafe_allow_html=True)
+        st.image(cv2.cvtColor(adjusted_img, cv2.COLOR_BGR2RGB), use_container_width=True)
+    with c2:
+        st.markdown("<div style='text-align: center; font-weight: bold; margin-bottom: 10px;'>Detekční maska</div>",
+                    unsafe_allow_html=True)
+        st.image(mask, clamp=True, use_container_width=True)
+    with c3:
+        st.markdown("<div style='text-align: center; font-weight: bold; margin-bottom: 10px;'>Anotovaný výsledek</div>",
+                    unsafe_allow_html=True)
+        st.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), use_container_width=True)
 else:
     c1, c2 = st.columns(2)
-    cols_imgs = [(c1, cv2.cvtColor(adjusted_img, cv2.COLOR_BGR2RGB), "Upravený snímek"),
-                 (c2, cv2.cvtColor(annotated,    cv2.COLOR_BGR2RGB), "Anotovaný výsledek")]
-
-for col, img_data, label in cols_imgs:
-    with col:
-        st.markdown(f'<p class="img-label">{label}</p>', unsafe_allow_html=True)
-        # Zmenšení obrázku na fixní výšku pro kompaktnost
-        if isinstance(img_data, np.ndarray):
-            h_orig, w_orig = img_data.shape[:2]
-            scale  = IMG_HEIGHT / h_orig
-            w_new  = int(w_orig * scale)
-            resized = cv2.resize(img_data, (w_new, IMG_HEIGHT), interpolation=cv2.INTER_AREA)
-            st.image(resized, use_container_width=True)
-        else:
-            st.image(img_data, use_container_width=True)
+    with c1:
+        st.markdown("<div style='text-align: center; font-weight: bold; margin-bottom: 10px;'>Upravený snímek</div>",
+                    unsafe_allow_html=True)
+        st.image(cv2.cvtColor(adjusted_img, cv2.COLOR_BGR2RGB), use_container_width=True)
+    with c2:
+        st.markdown("<div style='text-align: center; font-weight: bold; margin-bottom: 10px;'>Anotovaný výsledek</div>",
+                    unsafe_allow_html=True)
+        st.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), use_container_width=True)
 
 st.markdown("---")
 
-# ── Debug mezikroky ───────────────────────────────────────────────────────────
 if show_debug:
-    st.markdown("#### Mezikroky vytvoření výsledné masky")
-    gray_img  = cv2.cvtColor(adjusted_img, cv2.COLOR_BGR2GRAY)
-    blurred   = cv2.GaussianBlur(gray_img, (params["blur_kernel"], params["blur_kernel"]), 0)
+    st.markdown("###  Mezikroky vytvoření výsledné masky")
+    gray_img = cv2.cvtColor(adjusted_img, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray_img, (params["blur_kernel"], params["blur_kernel"]), 0)
     canny_dbg = cv2.Canny(blurred, used_t1, used_t2)
-    k_d       = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
-                                          (params["dilate_kernel"], params["dilate_kernel"]))
-    dilated   = cv2.dilate(canny_dbg, k_d, iterations=params["dilate_iter"])
-    _, otsu   = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    k_d = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
+                                    (params["dilate_kernel"], params["dilate_kernel"]))
+    dilated = cv2.dilate(canny_dbg, k_d, iterations=params["dilate_iter"])
+    _, otsu = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
     d1, d2, d3, d4 = st.columns(4)
-    for col_d, img_d, lbl_d in [
-        (d1, canny_dbg, "1. Canny hrany"),
-        (d2, dilated,   "2. Po dilataci"),
-        (d3, otsu,      "3. Otsu maska"),
-        (d4, mask,      "4. Výsledná maska"),
-    ]:
-        with col_d:
-            st.markdown(f'<p class="img-label">{lbl_d}</p>', unsafe_allow_html=True)
-            st.image(img_d, clamp=True, use_container_width=True)
+    with d1:
+        st.markdown(f"**1. Canny hrany**")
+        st.image(canny_dbg, clamp=True, use_container_width=True)
+    with d2:
+        st.markdown(f"**2. Po dilataci**")
+        st.image(dilated, clamp=True, use_container_width=True)
+    with d3:
+        st.markdown("**3. Otsu maska**")
+        st.image(otsu, clamp=True, use_container_width=True)
+    with d4:
+        st.markdown("**4. Výsledná maska**")
+        st.image(mask, clamp=True, use_container_width=True)
     st.markdown("---")
 
-# ── Histogramy ────────────────────────────────────────────────────────────────
 if show_histograms and n > 0:
-    st.markdown("#### Distribuce")
+    st.markdown("###  Distribuce")
     hist_fig = make_histogram_fig(df, unit)
     st.pyplot(hist_fig, use_container_width=True, clear_figure=True)
     plt.close(hist_fig)
     st.markdown("---")
 
-# ── Tabulka ───────────────────────────────────────────────────────────────────
 if show_table:
-    st.markdown(f"#### Naměřená data  `{n} částic`")
+    st.markdown(f"###  Naměřená data  `{n} částic`")
     if n > 0:
         num_cols = [c for c in df.columns if c != "ID"]
         styled = df.style.format({c: "{:.4f}" for c in num_cols})
         if highlight_max:
-            styled = styled.highlight_max(subset=num_cols, color="rgba(249, 115, 22, 0.25)")
-        st.dataframe(styled, use_container_width=True, height=380)
+            # Neutrální průhledná barva pro zvýraznění max hodnot, ať ladí se vším
+            styled = styled.highlight_max(subset=num_cols, color="rgba(249, 115, 22, 0.3)")
+        st.dataframe(styled, use_container_width=True, height=420)
     else:
-        st.warning("Žádné částice nebyly detekovány. Zkuste upravit parametry v sidebaru.")
+        st.warning(" Žádné částice nebyly detekovány. Zkuste upravit parametry v sidebaru.")
 
 st.markdown("---")
 
-# ── Export ────────────────────────────────────────────────────────────────────
-st.markdown("#### Export výsledků")
+st.markdown("###  Export výsledků")
 e1, e2, e3, e4 = st.columns(4)
+
 fname = uploaded_file.name.rsplit(".", 1)[0]
 
 with e1:
     if n > 0:
-        st.download_button("CSV", data=df.to_csv(index=False).encode("utf-8-sig"),
-                           file_name=f"{fname}_data.csv", mime="text/csv",
-                           use_container_width=True)
+        st.download_button(
+            " CSV",
+            data=df.to_csv(index=False).encode("utf-8-sig"),
+            file_name=f"{fname}_data.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
     else:
-        st.button("CSV", disabled=True, use_container_width=True)
+        st.button(" CSV", disabled=True, use_container_width=True)
 
 with e2:
     if n > 0:
-        st.download_button("Excel (.xlsx)", data=df_to_excel_bytes(df),
-                           file_name=f"{fname}_data.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                           use_container_width=True)
+        st.download_button(
+            " Excel (.xlsx)",
+            data=df_to_excel_bytes(df),
+            file_name=f"{fname}_data.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
     else:
-        st.button("Excel (.xlsx)", disabled=True, use_container_width=True)
+        st.button(" Excel (.xlsx)", disabled=True, use_container_width=True)
 
 with e3:
-    st.download_button("Anotovaný snímek (PNG)", data=img_to_png_bytes(annotated),
-                       file_name=f"{fname}_anotovany.png", mime="image/png",
-                       use_container_width=True)
+    st.download_button(
+        " Anotovaný snímek (PNG)",
+        data=img_to_png_bytes(annotated),
+        file_name=f"{fname}_anotovany.png",
+        mime="image/png",
+        use_container_width=True,
+    )
 
 with e4:
-    st.download_button("Maska (PNG)", data=mask_to_png_bytes(mask),
-                       file_name=f"{fname}_maska.png", mime="image/png",
-                       use_container_width=True)
+    st.download_button(
+        " Maska (PNG)",
+        data=mask_to_png_bytes(mask),
+        file_name=f"{fname}_maska.png",
+        mime="image/png",
+        use_container_width=True,
+    )
