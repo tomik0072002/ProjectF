@@ -16,7 +16,6 @@ st.set_page_config(
 
 
 #  Pomocné funkce pro detekci hran a částic
-
 def auto_canny_thresholds(blurred: np.ndarray, sigma: float = 0.33):
     p_low = np.percentile(blurred, 10)
     p_high = np.percentile(blurred, 90)
