@@ -279,7 +279,7 @@ with st.sidebar:
     st.markdown("Analýza skenu")
     st.markdown("---")
 
-    st.markdown("**1. Vstupní data**")
+    st.markdown("**Vstupní data**")
     file_path = st.text_input("Cesta k souboru (.npy)", value="./OUT/kamera_251.npy")
     file_name = Path(file_path).stem.replace("kamera_", "") if file_path else "?"
 
@@ -325,7 +325,7 @@ with st.sidebar:
     # Vizualizace
     st.markdown("**Vizualizace**")
     colormap = st.selectbox("Barvová mapa", ['magma', 'viridis', 'plasma', 'jet', 'inferno', 'gray'])
-    downsample_3d = st.select_slider("Rozlišení 3D", options=[1, 2, 4, 8], value=2,
+    downsample_3d = st.select_slider("Rozlišení 3D vizualizace", options=[1, 2, 4, 8], value=2,
                                      help="Vyšší hodnota = plynulejší 3D model, ale menší detail")
 
     st.markdown("---")
@@ -417,7 +417,7 @@ if st.session_state.depth_map is not None:
     depth_map = st.session_state.depth_map
     fname = st.session_state.last_file
 
-    st.markdown("### Výsledky")
+    st.markdown("### Statistické hodnoty")
 
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     c1.metric("Snímků", stats['n_snimku'])
@@ -449,7 +449,7 @@ if st.session_state.depth_map is not None:
     dl_col1, dl_col2 = st.columns(2)
     with dl_col1:
         st.download_button(
-            label="Stáhnout graf (.png)",
+            label="Stáhnout 2D vizualizaci a grafy (.png)",
             data=st.session_state.fig_bytes,
             file_name=f"sken_{fname}_depth_map.png",
             mime="image/png",
@@ -458,7 +458,7 @@ if st.session_state.depth_map is not None:
     with dl_col2:
         if save_npy and st.session_state.npy_bytes:
             st.download_button(
-                label="Stáhnout depth mapu (.npy)",
+                label="Stáhnout 3D depth mapu (.npy)",
                 data=st.session_state.npy_bytes,
                 file_name=f"sken_{fname}_depth_map.npy",
                 mime="application/octet-stream",
