@@ -15,7 +15,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-#  Vzhled stranky - Odlehčené CSS (pouze pro info box)
+#  Vzhled stranky
 st.markdown("""
 <style>
 .info-box {
@@ -89,11 +89,7 @@ def process_laser_scan(snimky_3d, params, progress_bar=None, status_text=None):
         ct, cb = params['crop_t'], params['crop_b']
         cl, cr = params['crop_l'], params['crop_r']
 
-        # Ochrana proti přetečení (pokud je ořez větší než obrázek)
-        if ct + cb >= h or cl + cr >= w:
-            img_cropped = img
-        else:
-            img_cropped = img[ct:h - cb, cl:w - cr]
+        img_cropped = img[ct:h - cb, cl:w - cr]
 
         # 2. Jas a kontrast
         if params['alpha'] != 1.0 or params['beta'] != 0:
@@ -121,7 +117,25 @@ def process_laser_scan(snimky_3d, params, progress_bar=None, status_text=None):
                 signal = cv2.dilate(signal, kernel, iterations=1)
 
         # 6. Extrakce profilu
-        profile = get_laser_profile(signal, params['threshold'], params['peak_window'], params['laser_axis'])
+        profile_cropped = get_laser_profile(signal, params['threshold'], params['peak_window'], params['laser_axis'])
+
+        # Korekce offsetu ořezu + vložení profilu zpět do pole původní velikosti.
+        # laser_axis=0 → profil má délku (h - ct - cb), souřadnice jsou v ose X → offset crop_l
+        # laser_axis=1 → profil má délku (w - cl - cr), souřadnice jsou v ose Y → offset crop_t
+        if params['laser_axis'] == 0:
+            full_len = h
+            offset_pos = ct      # kde v původním snímku začíná oříznutá oblast (řádky)
+            offset_val = cl      # o kolik jsou posunuty X souřadnice středu laseru
+        else:
+            full_len = w
+            offset_pos = cl
+            offset_val = ct
+
+        profile = np.full(full_len, np.nan)
+        corrected = np.where(np.isnan(profile_cropped), np.nan, profile_cropped + offset_val)
+        end_pos = offset_pos + len(corrected)
+        profile[offset_pos:end_pos] = corrected
+
         profiles.append(profile)
 
         if progress_bar and ((i + 1) % 10 == 0 or i == n - 1):
@@ -132,12 +146,6 @@ def process_laser_scan(snimky_3d, params, progress_bar=None, status_text=None):
     #  Post-processing Hloubkové mapy
     depth_map = np.array(profiles).T
     depth_map = np.nan_to_num(depth_map, nan=0.0)
-
-    # Nulování hodnot mimo rozsah
-    if params['min_value'] > 0:
-        depth_map[depth_map < params['min_value']] = 0
-    if params['max_value'] > 0:
-        depth_map[depth_map > params['max_value']] = 0
 
     # Vyhlazení Depth mapy
     if params['smooth_kernel'] > 1:
@@ -279,20 +287,39 @@ with st.sidebar:
     st.markdown("Analýza skenu")
     st.markdown("---")
 
-    st.markdown("**Vstupní data**")
-    file_path = st.text_input("Cesta k souboru (.npy)", value="./OUT/kamera_251.npy")
-    file_name = Path(file_path).stem.replace("kamera_", "") if file_path else "?"
+    with st.expander("Rozsah snímků", expanded=False):
+        st.caption(
+            "Omezí zpracování pouze na vybraný rozsah snímků ze souboru. "
+        )
+        frame_start = st.number_input(
+            "Od snímku", min_value=0, value=0, step=1,
+            help="Index prvního snímku, který se použije (0 = začátek)."
+        )
+        frame_end = st.number_input(
+            "Do snímku", min_value=0, value=0, step=1,
+            help="Index posledního snímku (včetně). Hodnota 0 = použij všechny do konce."
+        )
 
     with st.expander("Oříznutí obrazu (ROI)", expanded=False):
-        st.caption("Omezí výpočet pouze na určitou část senzoru")
-        crop_t = st.number_input("Shora [px]", 0, step=10)
-        crop_b = st.number_input("Zdola [px]", 0, step=10)
-        crop_l = st.number_input("Zleva [px]", 0, step=10)
-        crop_r = st.number_input("Zprava [px]", 0, step=10)
+        st.caption(
+            "Omezí zpracování pouze na vybranou oblast snímku. "
+        )
+        crop_t = st.number_input(
+            "Zdola v ose: Pozice na senzoru [px]", 0, step=10,
+        )
+        crop_b = st.number_input(
+            "Shora v ose: Pozice na senzoru [px]", 0, step=10,
+        )
+        crop_l = st.number_input(
+            "Zdola v ose: Poloha laseru [px]", 0, step=10,
+        )
+        crop_r = st.number_input(
+            "Zhora v ose: Poloha lseru [px]", 0, step=10,
+        )
 
     with st.expander("Korekce a Filtry (2D)", expanded=False):
         st.caption("Úpravy samotného snímku před detekcí")
-        alpha = st.slider("Kontrast (Alpha)", 0.5, 3.0, 1.0, 0.1)
+        alpha = st.slider("Kontrast (Alpha)", 0.5, 1.4, 1.0, 0.1)
         beta = st.slider("Jas (Beta)", -100, 100, 0, 5)
         st.markdown("---")
         median_k = st.slider("Medián filtr (Kernel)", 1, 15, 1, 2, help="1 = Vypnuto")
@@ -303,22 +330,20 @@ with st.sidebar:
         morph_k = st.slider("Velikost morfologie (Kernel)", 1, 15, 3, 2,
                             help="Aktivní pouze pokud vyberete operaci") if morph_op != 'Žádná' else 1
 
-    with st.expander("Detekce Laseru", expanded=True):
+    with st.expander("Detekce Laseru", expanded=False):
         st.caption("Parametry pro nalezení středu čáry")
         laser_axis = st.selectbox("Osa laseru", options=[0, 1],
                                   format_func=lambda x: "0 - Horizontálně" if x == 0 else "1 - Vertikálně")
         channel = st.selectbox("Kanál signálu", options=['GRAY', 'RG', 'R', 'G'])
-        threshold = st.slider("Práh (Min. jas)", 0, 255, 25, 5)
+        threshold = st.slider("Práh (Min. jas)", 0, 70, 10, 5)
         peak_window = st.slider("Prohledávací okno [px]", 1, 50, 10, 1, help="Šířka okolí maxima pro výpočet těžiště")
 
-    with st.expander("🛠 Post-processing Depth Mapy", expanded=False):
+    with st.expander("Post-processing Depth Mapy", expanded=False):
         st.caption("Úpravy hotové 3D mapy povrchu")
         smooth_kernel = st.slider("Vyhlazení povrchu (Medián)", 1, 15, 1, 2, help="1 = Vypnuto")
         outlier_sigma = st.slider("Filtrace odchylek (Sigma)", 0.0, 6.0, 0.0, 0.5,
                                   help="0 = Vypnuto. Odstraní body mimo N*směrodatná odchylka")
-        st.markdown("---")
-        min_value = st.slider("Ignorovat vzdálenost menší než [px]", 0, 2000, 0, 10)
-        max_value = st.slider("Ignorovat vzdálenost větší než [px]", 0, 3000, 0, 10, help="0 = Neomezeno")
+
 
     st.markdown("---")
 
@@ -329,11 +354,20 @@ with st.sidebar:
                                      help="Vyšší hodnota = plynulejší 3D model, ale menší detail")
 
     st.markdown("---")
-    run_btn = st.button("SPUSTIT ANALÝZU", use_container_width=True)
     save_npy = st.checkbox("Uložit depth mapu ke stažení (.npy)", value=True)
 
 #  Hlavni panel
 st.title("Zpracování skenu")
+
+# Vstupní soubor a tlačítko na hlavní stránce
+input_col, btn_col = st.columns([4, 1])
+with input_col:
+    file_path = st.text_input("Cesta k souboru (.npy)", value="./OUT/kamera_251.npy", label_visibility="collapsed",
+                              placeholder="Cesta k souboru (.npy)")
+with btn_col:
+    run_btn = st.button("SPUSTIT ANALÝZU", use_container_width=True)
+
+file_name = Path(file_path).stem.replace("kamera_", "") if file_path else "?"
 st.markdown(f"**Soubor:** `{file_path}`")
 
 # Stav session
@@ -372,6 +406,20 @@ if run_btn:
             unsafe_allow_html=True
         )
 
+        # Ořez rozsahu snímků
+        fs = int(frame_start)
+        fe = int(frame_end) + 1 if int(frame_end) > 0 else len(snimky)
+        fe = min(fe, len(snimky))
+        if fs >= fe:
+            st.error(f"Neplatný rozsah snímků: od {fs} do {fe - 1}. 'Od snímku' musí být menší než 'Do snímku'.")
+            st.stop()
+        snimky = snimky[fs:fe]
+        if fs > 0 or int(frame_end) > 0:
+            st.markdown(
+                f'<div class="info-box">Použit rozsah snímků: {fs} – {fe - 1} &nbsp;|&nbsp; Zpracováno: {len(snimky)} snímků</div>',
+                unsafe_allow_html=True
+            )
+
         params = dict(
             crop_t=crop_t, crop_b=crop_b, crop_l=crop_l, crop_r=crop_r,
             alpha=alpha, beta=beta,
@@ -379,8 +427,8 @@ if run_btn:
             morph_op=morph_op, morph_k=morph_k,
             laser_axis=laser_axis, channel=channel,
             threshold=threshold, peak_window=peak_window,
-            smooth_kernel=smooth_kernel, min_value=min_value, max_value=max_value,
             outlier_sigma=outlier_sigma,
+            smooth_kernel=smooth_kernel,  # ← toto chybělo
         )
 
         progress_bar = st.progress(0)
@@ -465,4 +513,4 @@ if st.session_state.depth_map is not None:
                 use_container_width=True
             )
 else:
-    st.info("Zadejte cestu k souboru v postranním panelu a klikněte na **SPUSTIT ANALÝZU**.")
+    st.info("Zadejte cestu k souboru výše a klikněte na **SPUSTIT ANALÝZU**.")
