@@ -13,8 +13,10 @@ from PIL import Image
 # Načtení obrázku loga
 script_dir = os.path.dirname(os.path.abspath(__file__))
 logo_path = os.path.join(script_dir, "vut_brno_00.jpg")
-logo = Image.open(logo_path)
-
+try:
+    logo = Image.open(logo_path)
+except FileNotFoundError:
+    logo = "🔥"
 
 # ── Nastavení stránky ──────────────────────────────────────────────────────────
 st.set_page_config(
@@ -402,6 +404,15 @@ col_left, col_center, col_right = st.columns([1, 2, 1])
 with col_center:
     st.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), use_container_width=True)
 
+st.markdown("---")
+st.markdown("#### Export výsledků")
+
+fname = uploaded.name.rsplit(".", 1)[0]
+
+# Převod anotovaného snímku na bajty pro stažení
+_, buffer = cv2.imencode(".png", annotated)
+img_dl_bytes = buffer.tobytes()
+
 if hotspoty:
     rows = []
     for h in hotspoty:
@@ -417,12 +428,31 @@ if hotspoty:
     df = pd.DataFrame(rows)
     st.dataframe(df, use_container_width=True, hide_index=True)
 
-    fname = uploaded.name.rsplit(".", 1)[0]
-    st.download_button(
-        "Stáhnout CSV (hotspoty)",
-        data=df.to_csv(index=False).encode("utf-8-sig"),
-        file_name=f"{fname}_hotspoty.csv",
-        mime="text/csv",
-    )
+    # Tlačítka pro stažení vedle sebe
+    dl_col1, dl_col2 = st.columns(2)
+    with dl_col1:
+        st.download_button(
+            "Stáhnout anotovaný snímek (PNG)",
+            data=img_dl_bytes,
+            file_name=f"{fname}_anotace.png",
+            mime="image/png",
+            use_container_width=True,
+        )
+    with dl_col2:
+        st.download_button(
+            "Stáhnout tabulku (CSV)",
+            data=df.to_csv(index=False).encode("utf-8-sig"),
+            file_name=f"{fname}_hotspoty.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
 else:
     st.warning("Při aktuálním nastavení nebyly detekovány žádné hotspoty.")
+
+    # Tlačítko pro stažení samotného snímku, i když nebyly nalezeny hotspoty
+    st.download_button(
+        "Stáhnout snímek (PNG)",
+        data=img_dl_bytes,
+        file_name=f"{fname}_bez_hotspotu.png",
+        mime="image/png",
+    )
