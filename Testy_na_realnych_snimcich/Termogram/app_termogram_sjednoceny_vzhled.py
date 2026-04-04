@@ -1,4 +1,5 @@
 import io
+import os
 import json
 import cv2
 import numpy as np
@@ -7,11 +8,18 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from dataclasses import dataclass
 from typing import List
+from PIL import Image
+
+# Načtení obrázku loga
+script_dir = os.path.dirname(os.path.abspath(__file__))
+logo_path = os.path.join(script_dir, "vut_brno_00.jpg")
+logo = Image.open(logo_path)
+
 
 # ── Nastavení stránky ──────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="FV Hotspot Detektor",
-    page_icon="🔥",
+    page_icon=logo,
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -50,7 +58,7 @@ class Hotspot:
         return "Slabý"
 
 
-# ── Detekce ────────────────────────────────────────────────────────────────────
+# ── Detekce a zpracování ───────────────────────────────────────────────────────
 def priprav(img: np.ndarray, blur_k: int) -> np.ndarray:
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32)
     if blur_k >= 3:
@@ -110,6 +118,7 @@ def detekce(img_bytes: bytes, params: str):
 
     gray = priprav(img, p["blur_k"])
     zmap = zscore_mapa(gray, p["z_window"])
+    maska_surova = (zmap >= p["z_thresh"]).astype(np.uint8) * 255
     maska = sestav_masku(zmap, p["z_thresh"], p["morph_k"])
     merged = sluc(maska, p["merge_dist"])
 
@@ -155,11 +164,10 @@ def detekce(img_bytes: bytes, params: str):
     for i, h in enumerate(hotspoty):
         h.id = i + 1
 
-    return img, gray, zmap, maska, merged, hotspoty
+    return img, gray, zmap, maska_surova, merged, hotspoty
 
 
 # ── Anotace ────────────────────────────────────────────────────────────────────
-# BGR barvy pro jednotlivé úrovně confidence
 CONF_BGR = {
     0: (160, 160, 160),
     1: (0, 210, 210),
@@ -168,23 +176,18 @@ CONF_BGR = {
     4: (0, 20, 220),
     5: (0, 0, 180),
 }
-
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 
 
 def putText_outline(img, text, org, scale, color_fg, thickness=1):
-    """Text s černým obrysem – čitelný na tmavém i světlém pozadí."""
     cv2.putText(img, text, org, FONT, scale, (0, 0, 0), thickness + 2, cv2.LINE_AA)
-    cv2.putText(img, text, org, FONT, scale, color_fg,  thickness,     cv2.LINE_AA)
+    cv2.putText(img, text, org, FONT, scale, color_fg, thickness, cv2.LINE_AA)
 
 
-def anotuj(img: np.ndarray, hotspoty: List[Hotspot], z_thresh: float, z_window: int) -> np.ndarray:
+def anotuj(img: np.ndarray, hotspoty: List[Hotspot]) -> np.ndarray:
     out = img.copy()
-
     for hs in hotspoty:
         bgr = CONF_BGR.get(min(hs.confidence, 5), (0, 0, 255))
-
-        # Ohraničovací obdélník
         pad = 4
         x1 = max(0, hs.x - pad)
         y1 = max(0, hs.y - pad)
@@ -192,30 +195,16 @@ def anotuj(img: np.ndarray, hotspoty: List[Hotspot], z_thresh: float, z_window: 
         y2 = min(img.shape[0] - 1, hs.y + hs.h + pad)
         cv2.rectangle(out, (x1, y1), (x2, y2), bgr, 2)
 
-        # ── Řádek 1: "#ID  Závažnost"
-        line1  = f"#{hs.id} {hs.zavaznost}"
-        scale1 = 0.42
+        line1 = f"#{hs.id}"
+        scale1 = 0.5
         (_, th1), _ = cv2.getTextSize(line1, FONT, scale1, 1)
-        ty1 = max(th1 + 2, y1 - 4)          # nad rámečkem; neklesne mimo obraz
+        ty1 = max(th1 + 2, y1 - 4)
         putText_outline(out, line1, (x1, ty1), scale1, bgr)
 
-        # ── Řádek 2: "Z = XX.XX"
-        line2  = f"Z = {hs.max_z:.2f}"
-        scale2 = 0.38
-        (_, th2), _ = cv2.getTextSize(line2, FONT, scale2, 1)
-        ty2 = ty1 + th1 + 2                  # těsně pod řádkem 1
-        if ty2 <= y1:                         # vejde se nad rámeček
-            putText_outline(out, line2, (x1, ty2), scale2, bgr)
-        else:                                  # nestejde → první řádek uvnitř rámečku
-            putText_outline(out, line2, (x1 + 2, y1 + th2 + 3), scale2, bgr)
-
-    # Souhrnný nápis v levém horním rohu
     putText_outline(out, f"Hotspoty: {len(hotspoty)}", (8, 22), 0.5, (255, 255, 255))
-
     return out
 
 
-# ── Helper: matplotlib figure → bytes ─────────────────────────────────────────
 def fig_to_bytes(fig) -> bytes:
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=130, bbox_inches="tight", transparent=True)
@@ -224,7 +213,6 @@ def fig_to_bytes(fig) -> bytes:
     return buf.read()
 
 
-# ── Z-skóre mapa jako standalone matplotlib figure ────────────────────────────
 def render_zscore(zmap: np.ndarray, z_thresh: float) -> bytes:
     fig, ax = plt.subplots(figsize=(7, 5))
     fig.patch.set_alpha(0.0)
@@ -235,7 +223,6 @@ def render_zscore(zmap: np.ndarray, z_thresh: float) -> bytes:
     cb.set_label("Z-skóre", color="gray")
     cb.ax.yaxis.set_tick_params(color="gray")
     plt.setp(cb.ax.yaxis.get_ticklabels(), color="gray")
-    ax.set_title(f"Z-skóre mapa  (práh = {z_thresh})", color="gray", fontsize=10)
     ax.axis("off")
     plt.tight_layout()
     return fig_to_bytes(fig)
@@ -253,8 +240,8 @@ PRESETS = {
                      merge_dist=15, min_area=15, max_area=800, max_aspect=3.5, min_circ=0.0, conf_min=1),
     "sensitive": dict(alpha=1.0, beta=0, blur_k=3, z_window=51, z_thresh=2.5, morph_k=3,
                       merge_dist=15, min_area=5, max_area=3000, max_aspect=5.0, min_circ=0.0, conf_min=0),
-    "strict":   dict(alpha=1.0, beta=0, blur_k=7, z_window=91, z_thresh=3.5, morph_k=5,
-                     merge_dist=10, min_area=10, max_area=500, max_aspect=3.5, min_circ=0.3, conf_min=1),
+    "strict": dict(alpha=1.0, beta=0, blur_k=7, z_window=91, z_thresh=3.5, morph_k=5,
+                   merge_dist=10, min_area=10, max_area=500, max_aspect=3.5, min_circ=0.3, conf_min=1),
 }
 CONF_TO_FILTER = {v: k for k, v in FILTER_ZAVAZNOST_MAP.items()}
 
@@ -266,66 +253,80 @@ def apply_preset(name: str):
     st.session_state["filter_zavaznost"] = CONF_TO_FILTER.get(cm, "Střední a kritické")
 
 
+# Prvotní inicializace
 if "sl_alpha" not in st.session_state:
     apply_preset("standard")
-
+    st.session_state["active_preset"] = "Standard"
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("## FV Hotspot Detektor")
+    st.markdown("### FV Hotspot Detektor")
+    st.caption("Demonstrátor zpracování obrazu")
     st.markdown("---")
 
     uploaded = st.file_uploader("Nahrát termogram", type=["jpg", "jpeg", "png", "bmp", "tif"])
     st.markdown("---")
 
     st.markdown("**Rychlé předvolby**")
-    if st.button("Standardní",  use_container_width=True): apply_preset("standard")
-    if st.button("Citlivější",  use_container_width=True): apply_preset("sensitive")
-    if st.button("Přísnější",   use_container_width=True): apply_preset("strict")
+    cols = st.columns(3)
+
+
+    # Pomocná funkce pro barvu tlačítka
+    def get_btn_type(label):
+        return "primary" if st.session_state.get("active_preset") == label else "secondary"
+
+
+    # Zjednodušená logika tlačítek pomocí st.rerun()
+    if cols[0].button("Standard", use_container_width=True, type=get_btn_type("Standard")):
+        apply_preset("standard")
+        st.session_state["active_preset"] = "Standard"
+        st.rerun()
+
+    if cols[1].button("Citlivé", use_container_width=True, type=get_btn_type("Citlivé")):
+        apply_preset("sensitive")
+        st.session_state["active_preset"] = "Citlivé"
+        st.rerun()
+
+    if cols[2].button("Přísné", use_container_width=True, type=get_btn_type("Přísné")):
+        apply_preset("strict")
+        st.session_state["active_preset"] = "Přísné"
+        st.rerun()
 
     st.markdown("---")
-    with st.expander("✂️ Oříznutí obrazu (ROI)", expanded=False):
-        st.caption("Odříznutí textů a teplotních škál na okrajích")
-        crop_t = st.number_input("Shora [px]",  0, step=10, key="sl_crop_t")
-        crop_b = st.number_input("Zdola [px]",  0, step=10, key="sl_crop_b")
-        crop_l = st.number_input("Zleva [px]",  0, step=10, key="sl_crop_l")
-        crop_r = st.number_input("Zprava [px]", 0, step=10, key="sl_crop_r")
 
-    with st.expander("🎨 Předzpracování", expanded=False):
-        alpha    = st.slider("Kontrast (Alpha)", 0.5, 3.0, key="sl_alpha")
-        beta     = st.slider("Jas (Beta)", -100, 100, key="sl_beta")
-        blur_k   = st.slider("Gaussovo rozmazání [px]", 0, 15, step=2, key="sl_blur_k")
-
-    with st.expander("🔥 Detekce (Z-skóre)", expanded=True):
-        z_thresh = st.slider("Z-skóre práh", 1.0, 8.0, step=0.1, key="sl_z_thresh")
-        z_window = st.slider("Velikost analyzované buňky (okno) [px]", 11, 201, step=2, key="sl_z_window",
-                             help="Menší hodnota pro malé panely v dálce, větší pro detailní snímky.")
+    with st.expander("Fáze 1: Geometrie a Předzpracování", expanded=False):
+        crop_t = st.number_input("Ořez shora [px]", 0, step=10, key="sl_crop_t")
+        crop_b = st.number_input("Ořez zdola [px]", 0, step=10, key="sl_crop_b")
+        crop_l = st.number_input("Ořez zleva [px]", 0, step=10, key="sl_crop_l")
+        crop_r = st.number_input("Ořez zprava [px]", 0, step=10, key="sl_crop_r")
         st.markdown("---")
-        st.caption("Zobrazovat výsledky:")
+        alpha = st.slider("Kontrast (Alpha)", 0.5, 3.0, key="sl_alpha")
+        beta = st.slider("Jas (Beta)", -100, 100, key="sl_beta")
+        blur_k = st.slider("Gauss. filtr [px]", 0, 15, step=2, key="sl_blur_k")
+
+    with st.expander("Fáze 2: Statistická anomálie", expanded=False):
+        z_window = st.slider("Velikost okna [px]", 11, 201, step=2, key="sl_z_window")
+        z_thresh = st.slider("Z-skóre práh", 1.0, 8.0, step=0.1, key="sl_z_thresh")
+
+    with st.expander("Fáze 3: Morfologické operace", expanded=False):
+        morph_k = st.slider("Morf. otevření [px]", 0, 11, step=2, key="sl_morph_k")
+        merge_dist = st.slider("Sloučení [px]", 0, 40, step=5, key="sl_merge_dist")
+
+    with st.expander("Fáze 4: Geometrická filtrace", expanded=False):
+        min_area = st.slider("Min. plocha [px²]", 5, 200, step=5, key="sl_min_area")
+        max_area = st.slider("Max. plocha [px²]", 100, 3500, step=100, key="sl_max_area")
+        max_aspect = st.slider("Max. poměr stran", 1.0, 10.0, step=0.5, key="sl_max_aspect")
+        min_circ = st.slider("Min. kruhovitost", 0.0, 1.0, step=0.05, key="sl_min_circ")
+        st.markdown("---")
         filter_label = st.radio(
-            "Zobrazovat hotspoty",
+            "Zobrazovat ve výsledcích:",
             options=list(FILTER_ZAVAZNOST_MAP.keys()),
-            key="filter_zavaznost",
-            label_visibility="collapsed",
+            key="filter_zavaznost"
         )
         conf_min = FILTER_ZAVAZNOST_MAP[filter_label]
 
-    with st.expander("📐 Filtrování tvarů", expanded=False):
-        min_area   = st.slider("Min. plocha [px²]",   5,   200, step=5,   key="sl_min_area")
-        max_area   = st.slider("Max. plocha [px²]",  100, 3500, step=100, key="sl_max_area")
-        max_aspect = st.slider("Max. poměr stran",   1.0, 10.0, step=0.5, key="sl_max_aspect")
-        min_circ   = st.slider("Min. kruhovitost",   0.0,  1.0, step=0.05, key="sl_min_circ",
-                               help="0 = všechny tvary, 1 = pouze kruhy.")
-
-    with st.expander("🛠 Post-processing (Morfologie)", expanded=False):
-        morph_k    = st.slider("Morfologické otevření [px]", 0, 11, step=2, key="sl_morph_k")
-        merge_dist = st.slider("Sloučení fragmentů [px]",    0, 40, step=5, key="sl_merge_dist")
-
-    st.markdown("---")
-
-
 # ── Hlavní část ────────────────────────────────────────────────────────────────
-st.title("Termogram – Analýza Hotspotů")
+st.title("Zpracovatelský řetězec: Detekce Hotspotů")
 
 if uploaded is None:
     st.info("Nahrajte termogram v levém panelu pro spuštění analýzy.")
@@ -336,18 +337,18 @@ params_dict = {
     "crop_b": st.session_state.get("sl_crop_b", 0),
     "crop_l": st.session_state.get("sl_crop_l", 0),
     "crop_r": st.session_state.get("sl_crop_r", 0),
-    "alpha":      st.session_state.get("sl_alpha", 1.0),
-    "beta":       st.session_state.get("sl_beta", 0),
-    "blur_k":     blur_k,
-    "z_window":   z_window,
-    "z_thresh":   z_thresh,
-    "morph_k":    morph_k,
+    "alpha": alpha,
+    "beta": beta,
+    "blur_k": blur_k,
+    "z_window": z_window,
+    "z_thresh": z_thresh,
+    "morph_k": morph_k,
     "merge_dist": merge_dist,
-    "min_area":   min_area,
-    "max_area":   max_area,
+    "min_area": min_area,
+    "max_area": max_area,
     "max_aspect": max_aspect,
-    "min_circ":   min_circ,
-    "conf_min":   conf_min,
+    "min_circ": min_circ,
+    "conf_min": conf_min,
 }
 params_json = json.dumps(params_dict, sort_keys=True)
 img_bytes = uploaded.getvalue()
@@ -358,95 +359,70 @@ def cached(img_bytes, params):
     return detekce(img_bytes, params)
 
 
-with st.spinner("Počítám Z-skóre mapu…"):
-    img, gray, zmap, maska, merged, hotspoty = cached(img_bytes, params_json)
+with st.spinner("Počítám analýzu..."):
+    img, gray, zmap, maska_surova, merged, hotspoty = cached(img_bytes, params_json)
 
-annotated = anotuj(img, hotspoty, z_thresh, z_window)
+annotated = anotuj(img, hotspoty)
 
-# ── Metriky ────────────────────────────────────────────────────────────────────
+# ── Kontinuální rozvržení (Pipeline pro komisi pod sebou) ──────────────────────
+
+st.markdown("---")
+st.header("1. Vstup & Předzpracování")
+c1, c2 = st.columns(2)
+with c1:
+    st.image(cv2.cvtColor(img, cv2.COLOR_BGR2RGB), caption="Originál (s aplikovaným ořezem)", use_container_width=True)
+with c2:
+    st.image(gray / 255.0, caption="Předzpracovaný snímek (Kontrast, Jas, Gauss. filtr)", use_container_width=True,
+             clamp=True)
+
+st.markdown("---")
+st.header("2. Detekce (Z-skóre)")
+c3, c4 = st.columns(2)
+with c3:
+    zs_bytes = render_zscore(zmap, z_thresh)
+    st.image(zs_bytes, caption=f"Z-skóre mapa (práh: {z_thresh})", use_container_width=True)
+with c4:
+    st.image(maska_surova, caption="Surová maska (před morfologií)", use_container_width=True)
+
+st.markdown("---")
+st.header("3. Finální výsledek a filtrace")
+
 n_krit = sum(1 for h in hotspoty if h.confidence >= 3)
-n_str  = sum(1 for h in hotspoty if 1 <= h.confidence < 3)
+n_str = sum(1 for h in hotspoty if 1 <= h.confidence < 3)
 n_slab = sum(1 for h in hotspoty if h.confidence == 0)
 
-cols = st.columns(4)
-cols[0].metric("Celkem hotspotů", len(hotspoty))
-cols[1].metric("Kritické",  n_krit)
-cols[2].metric("Střední",   n_str)
-cols[3].metric("Slabé",     n_slab)
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("Celkem hotspotů", len(hotspoty))
+m2.metric("Kritické nálezy", n_krit)
+m3.metric("Střední nálezy", n_str)
+m4.metric("Slabé nálezy", n_slab)
 
-st.markdown("---")
-
-# ── Obrázky ────────────────────────────────────────────────────────────────────
-c1, c2, c3 = st.columns(3)
-with c1:
-    st.markdown("**Analyzovaný snímek**")
-    st.image(cv2.cvtColor(img, cv2.COLOR_BGR2RGB), use_container_width=True)
-with c2:
-    st.markdown("**Detekční maska**")
-    st.image(maska, use_container_width=True)
-with c3:
-    st.markdown("**Anotovaný výsledek**")
+# Uložení finálního obrázku do prostředního ze 3 sloupců pro zmenšení jeho velikosti
+col_left, col_center, col_right = st.columns([1, 2, 1])
+with col_center:
     st.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), use_container_width=True)
 
-# ── Z-skóre mapa v expanderu ───────────────────────────────────────────────────
-st.markdown("---")
-with st.expander("📊 Z-skóre mapa", expanded=False):
-    zs_bytes = render_zscore(zmap, z_thresh)
-    st.image(zs_bytes, use_container_width=True)
-    st.download_button(
-        "Stáhnout Z-skóre mapu (PNG)",
-        data=render_zscore(zmap, z_thresh),
-        file_name=f"{uploaded.name.rsplit('.', 1)[0]}_zscore.png",
-        mime="image/png",
-    )
-
-st.markdown("---")
-
-# ── Tabulka ────────────────────────────────────────────────────────────────────
-st.markdown(f"### Nalezené hotspoty: `{len(hotspoty)}`")
 if hotspoty:
     rows = []
     for h in hotspoty:
         rows.append({
-            "ID":           h.id,
-            "Závažnost":    h.zavaznost,
-            "Max Z":        h.max_z,
-            "Mean Z":       h.mean_z,
-            "Max jas":      h.max_intensity,
+            "ID": h.id,
+            "Závažnost nálezu": h.zavaznost,
+            "Max Z": h.max_z,
             "Plocha [px²]": h.area,
-            "Poměr stran":  h.aspect_ratio,
-            "Kruhovitost":  h.circularity,
-            "X":            h.x,
-            "Y":            h.y,
-            "W×H":          f"{h.w}×{h.h}",
+            "Poměr stran": h.aspect_ratio,
+            "Kruhovitost": h.circularity,
+            "Rozměr (W×H) [px]": f"{h.w}×{h.h}",
         })
     df = pd.DataFrame(rows)
-    st.dataframe(df, use_container_width=True, height=min(450, 48 + len(df) * 38))
-else:
-    st.warning("Žádné hotspoty nenalezeny.")
+    st.dataframe(df, use_container_width=True, hide_index=True)
 
-st.markdown("---")
-
-# ── Export ─────────────────────────────────────────────────────────────────────
-st.markdown("### Export")
-fname = uploaded.name.rsplit(".", 1)[0]
-e1, e2, e3 = st.columns(3)
-
-_, png_enc = cv2.imencode(".png", annotated)
-with e1:
+    fname = uploaded.name.rsplit(".", 1)[0]
     st.download_button(
-        "Stáhnout Anotovaný PNG",
-        data=png_enc.tobytes(),
-        file_name=f"{fname}_hotspoty.png",
-        mime="image/png",
-        use_container_width=True,
+        "Stáhnout CSV (hotspoty)",
+        data=df.to_csv(index=False).encode("utf-8-sig"),
+        file_name=f"{fname}_hotspoty.csv",
+        mime="text/csv",
     )
-if hotspoty:
-    with e2:
-        st.download_button(
-            "Stáhnout CSV (hotspoty)",
-            data=df.to_csv(index=False).encode("utf-8-sig"),
-            file_name=f"{fname}_hotspoty.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
+else:
+    st.warning("Při aktuálním nastavení nebyly detekovány žádné hotspoty.")

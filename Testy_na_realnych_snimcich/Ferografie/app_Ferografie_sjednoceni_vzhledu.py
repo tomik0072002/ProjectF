@@ -1,4 +1,5 @@
 import io
+import os
 import json
 import cv2
 import numpy as np
@@ -6,10 +7,17 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import streamlit as st
 from typing import Dict, Optional, Any
+from PIL import Image
+
+# Načtení obrázku loga
+script_dir = os.path.dirname(os.path.abspath(__file__))
+logo_path = os.path.join(script_dir, "vut_brno_00.jpg")
+logo = Image.open(logo_path)
 
 #  Nastavení stránky
 st.set_page_config(
     page_title="Ferografie – Analýza částic",
+    page_icon=logo,
     layout="wide",
     initial_sidebar_state="expanded",
 )

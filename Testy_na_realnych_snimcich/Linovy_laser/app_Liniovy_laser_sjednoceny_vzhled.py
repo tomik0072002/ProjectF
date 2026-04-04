@@ -1,4 +1,5 @@
 import numpy as np
+import os
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import cv2
@@ -7,10 +8,17 @@ import streamlit as st
 import plotly.graph_objects as go
 import io
 import time
+from PIL import Image
+
+# Načtení obrázku loga
+script_dir = os.path.dirname(os.path.abspath(__file__))
+logo_path = os.path.join(script_dir, "vut_brno_00.jpg")
+logo = Image.open(logo_path)
 
 #  Konfigurace stranky
 st.set_page_config(
     page_title="Liniovy laser - analyza skenu",
+    page_icon=logo,
     layout="wide",
     initial_sidebar_state="expanded",
 )
