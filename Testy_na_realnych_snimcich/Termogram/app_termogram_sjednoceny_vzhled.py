@@ -328,7 +328,7 @@ with st.sidebar:
         conf_min = FILTER_ZAVAZNOST_MAP[filter_label]
 
 # ── Hlavní část ────────────────────────────────────────────────────────────────
-st.title("Zpracovatelský řetězec: Detekce Hotspotů")
+st.title("Detekce Hotspotů")
 
 if uploaded is None:
     st.info("Nahrajte termogram v levém panelu pro spuštění analýzy.")
@@ -369,7 +369,7 @@ annotated = anotuj(img, hotspoty)
 # ── Kontinuální rozvržení (Pipeline pro komisi pod sebou) ──────────────────────
 
 st.markdown("---")
-st.header("1. Vstup & Předzpracování")
+st.header("Vstup a Předzpracování")
 c1, c2 = st.columns(2)
 with c1:
     st.image(cv2.cvtColor(img, cv2.COLOR_BGR2RGB), caption="Originál (s aplikovaným ořezem)", use_container_width=True)
@@ -378,7 +378,7 @@ with c2:
              clamp=True)
 
 st.markdown("---")
-st.header("2. Detekce (Z-skóre)")
+st.header("Detekce (Z-skóre)")
 c3, c4 = st.columns(2)
 with c3:
     zs_bytes = render_zscore(zmap, z_thresh)
@@ -387,7 +387,7 @@ with c4:
     st.image(maska_surova, caption="Surová maska (před morfologií)", use_container_width=True)
 
 st.markdown("---")
-st.header("3. Finální výsledek a filtrace")
+st.header("Finální výsledek a filtrace")
 
 n_krit = sum(1 for h in hotspoty if h.confidence >= 3)
 n_str = sum(1 for h in hotspoty if 1 <= h.confidence < 3)
