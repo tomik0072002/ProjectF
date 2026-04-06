@@ -1,7 +1,3 @@
-[server]
-# Okamžitě ukončit bez čekání na cleanup
-headless = false
-
-[runner]
-# Zkrátit timeout na minimum
-fastReruns = true
+[theme]
+base="dark"
+primaryColor="#0068c9"
