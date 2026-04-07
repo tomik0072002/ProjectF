@@ -5,14 +5,35 @@ import pandas as pd
 from PIL import Image
 import io
 import math
+import os
+
+# Načtení obrázku loga
+script_dir = os.path.dirname(os.path.abspath(__file__))
+logo_path = os.path.join(script_dir, "vut_brno_00.jpg")
+logo = Image.open(logo_path)
+
 
 # ─── Page config ─────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="VizioMeter – Měření tvarů",
-    page_icon="🔬",
+    page_title="VizioMeter - Měření tvarů",
+    page_icon=logo,
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# ─── Vzhled stránky ──────────────────────────────────────────────────────────
+st.markdown("""
+<style>
+.info-box {
+    background: rgba(128, 128, 128, 0.1);
+    border: 1px solid rgba(128, 128, 128, 0.2);
+    border-radius: 4px;
+    padding: 12px 16px;
+    font-size: 0.8rem;
+    margin: 8px 0;
+}
+</style>
+""", unsafe_allow_html=True)
 
 
 # ─── Utility ──────────────────────────────────────────────────────────────────
@@ -245,15 +266,22 @@ def draw_circle_overlay(base_img, cm, px_per_mm):
     r_fit_px = int(cm["r_fit_mm"] * px_per_mm)
     r_max_px = int(cm["r_max_mm"] * px_per_mm)
     r_min_px = int(cm["r_min_mm"] * px_per_mm)
-    for a in range(0, 360, 3):
+
+    # Akademické barvy BGR pro kružnice
+    c_fit = (178, 114, 0)  # Tmavě modrá
+    c_max = (0, 94, 213)  # Oranžová
+    c_min = (0, 158, 115)  # Zelená
+
+    for a in range(0, 360, 4):  # Přerušovaná čára pro fitovaný kruh
         s, e = math.radians(a), math.radians(a + 2)
         cv2.line(out,
                  (cx + int(r_fit_px * math.cos(s)), cy + int(r_fit_px * math.sin(s))),
                  (cx + int(r_fit_px * math.cos(e)), cy + int(r_fit_px * math.sin(e))),
-                 (0, 255, 220), 2, cv2.LINE_AA)
-    cv2.circle(out, (cx, cy), r_max_px, (60, 60, 255), 1, cv2.LINE_AA)
-    cv2.circle(out, (cx, cy), r_min_px, (60, 220, 60), 1, cv2.LINE_AA)
-    cv2.drawMarker(out, (cx, cy), (0, 255, 220), cv2.MARKER_CROSS, 20, 2)
+                 c_fit, 2, cv2.LINE_AA)
+
+    cv2.circle(out, (cx, cy), r_max_px, c_max, 1, cv2.LINE_AA)
+    cv2.circle(out, (cx, cy), r_min_px, c_min, 1, cv2.LINE_AA)
+    cv2.drawMarker(out, (cx, cy), (0, 0, 0), cv2.MARKER_CROSS, 15, 1)
     return out
 
 
@@ -304,17 +332,18 @@ def deserialize_contours(cnts_s, shapes):
 def draw_edge_map(base_img, edges, highlights, raw_cnt=None):
     out = base_img.copy()
     if raw_cnt is not None:
-        cv2.drawContours(out, [raw_cnt], 0, (200, 210, 225), 1, cv2.LINE_AA)
+        cv2.drawContours(out, [raw_cnt], 0, (180, 180, 180), 1, cv2.LINE_AA)  # Jemná šedá pro raw konturu
 
+    # Vykreslení neaktivních hran (jemná čárkovaná čára)
     for i, e in enumerate(edges):
         if i in highlights:
             continue
         p1 = tuple(e["p1"].astype(int))
         p2 = tuple(e["p2"].astype(int))
         dist = int(np.linalg.norm(np.array(p2) - np.array(p1)))
-        if dist == 0:
-            continue
-        dash_len, gap_len = 12, 8
+        if dist == 0: continue
+
+        dash_len, gap_len = 8, 8
         dx = (p2[0] - p1[0]) / dist
         dy = (p2[1] - p1[1]) / dist
         pos = 0
@@ -322,48 +351,38 @@ def draw_edge_map(base_img, edges, highlights, raw_cnt=None):
         while pos < dist:
             seg_end = min(pos + (dash_len if drawing else gap_len), dist)
             if drawing:
-                sx = int(p1[0] + pos * dx)
-                sy = int(p1[1] + pos * dy)
-                ex = int(p1[0] + seg_end * dx)
-                ey = int(p1[1] + seg_end * dy)
-                cv2.line(out, (sx, sy), (ex, ey), (130, 145, 170), 2, cv2.LINE_AA)
+                sx, sy = int(p1[0] + pos * dx), int(p1[1] + pos * dy)
+                ex, ey = int(p1[0] + seg_end * dx), int(p1[1] + seg_end * dy)
+                cv2.line(out, (sx, sy), (ex, ey), (150, 150, 150), 1, cv2.LINE_AA)
             pos = seg_end
             drawing = not drawing
 
+    # Vykreslení vybraných (highlighted) hran čistou plnou čarou
     for i, e in enumerate(edges):
         if i not in highlights:
             continue
         p1 = tuple(e["p1"].astype(int))
         p2 = tuple(e["p2"].astype(int))
         color_bgr = highlights[i]
-        glow_layer = out.copy()
-        cv2.line(glow_layer, p1, p2, color_bgr, 18, cv2.LINE_AA)
-        cv2.addWeighted(glow_layer, 0.25, out, 0.75, 0, out)
-        cv2.line(out, p1, p2, color_bgr, 8, cv2.LINE_AA)
-        bright = tuple(min(255, int(c * 1.4)) for c in color_bgr)
-        cv2.line(out, p1, p2, bright, 3, cv2.LINE_AA)
 
+        # Čistá linie bez glow efektu
+        cv2.line(out, p1, p2, color_bgr, 3, cv2.LINE_AA)
+
+    # Vykreslení štítků (čísel hran) v čistých bílých kruzích s barevným okrajem
     for i, e in enumerate(edges):
         mid = tuple(e["mid"].astype(int))
         is_hi = i in highlights
-        badge_color = highlights[i] if is_hi else (90, 100, 120)
-        badge_r = 16 if is_hi else 13
+        badge_color = highlights[i] if is_hi else (120, 120, 120)
+        badge_r = 14 if is_hi else 12
 
-        cv2.circle(out, (mid[0] + 2, mid[1] + 2), badge_r, (0, 0, 0), -1)
-        cv2.circle(out, mid, badge_r, badge_color, -1)
-        cv2.circle(out, mid, badge_r, (255, 255, 255), 2 if is_hi else 1)
+        cv2.circle(out, mid, badge_r, (255, 255, 255), -1)  # Bílé pozadí
+        cv2.circle(out, mid, badge_r, badge_color, 2 if is_hi else 1, cv2.LINE_AA)  # Barevný okraj
 
         label = str(i + 1)
-        fs = 0.55 if is_hi else 0.45
-        tw = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs, 2)[0][0]
-        cv2.putText(out, label,
-                    (mid[0] - tw // 2, mid[1] + 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, fs,
-                    (0, 0, 0), 3, cv2.LINE_AA)
-        cv2.putText(out, label,
-                    (mid[0] - tw // 2, mid[1] + 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, fs,
-                    (255, 255, 255), 1, cv2.LINE_AA)
+        fs = 0.5 if is_hi else 0.4
+        tw = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs, 1)[0][0]
+        cv2.putText(out, label, (mid[0] - tw // 2, mid[1] + 4),
+                    cv2.FONT_HERSHEY_SIMPLEX, fs, (0, 0, 0), 1, cv2.LINE_AA)
 
     return out
 
@@ -398,8 +417,8 @@ def draw_legend_pil(cv_img, legend_defs):
     ov_draw.rounded_rectangle(
         [x0, y0, x0 + panel_w, y0 + panel_h],
         radius=8,
-        fill=(15, 18, 28, 210),
-        outline=(60, 70, 90, 255),
+        fill=(255, 255, 255, 230),  # Akademické světlé pozadí
+        outline=(100, 100, 100, 255),  # Šedý okraj
         width=1,
     )
     pil = pil.convert("RGBA")
@@ -411,17 +430,17 @@ def draw_legend_pil(cv_img, legend_defs):
         ty = y0 + pad + idx * line_h
         sx = x0 + pad
         draw.rectangle([sx, ty + 2, sx + swatch, ty + 2 + swatch - 4], fill=rgb)
-        draw.text((sx + swatch + gap, ty), txt, font=font, fill=(230, 235, 245))
+        draw.text((sx + swatch + gap, ty), txt, font=font, fill=(0, 0, 0))  # Černý text
 
     return cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
 
 
 def tol_row(label, measured, lo, hi, unit, extra="", skip=False):
     """
-    Vrátí jak zformátovaný Markdown string pro UI, tak slovník pro export dat.
+    Vrátí zformátovaný Markdown string pro UI a slovník pro export dat.
     """
     if skip:
-        md = f"⏭ **{label}** — přeskočeno"
+        md = f"**{label}** — přeskočeno"
         data = {
             "Veličina": label,
             "Naměřeno": None,
@@ -433,11 +452,11 @@ def tol_row(label, measured, lo, hi, unit, extra="", skip=False):
         return md, data
 
     ok = lo <= measured <= hi
-    icon = "✅" if ok else "❌"
+    icon = "[OK]" if ok else "[NOK]"
     m_str = f"{measured:.3f}".rstrip("0").rstrip(".")
     if m_str == "": m_str = "0"
 
-    md = f"{icon} **{label}**: `{m_str} {unit}` ∈ `[{lo:.2f} – {hi:.2f} {unit}]` {extra}"
+    md = f"**{icon} {label}**: `{m_str} {unit}` ∈ `[{lo:.2f} – {hi:.2f} {unit}]` {extra}"
     data = {
         "Veličina": label,
         "Naměřeno": round(measured, 3),
@@ -452,71 +471,82 @@ def tol_row(label, measured, lo, hi, unit, extra="", skip=False):
 
 # ─── UI ───────────────────────────────────────────────────────────────────────
 
-st.title("🔬 VizioMeter")
-st.markdown("**Interaktivní analýza geometrických tolerancí**")
+st.title("VizioMeter")
+st.markdown("Interaktivní analýza geometrických tolerancí")
 st.markdown("---")
 
 # ─── Sidebar ──────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("### ⚙ Kalibrace")
-    calib_file = st.file_uploader("Šachovnicový snímek",
-                                  type=["jpg", "jpeg", "png", "bmp"], key="calib")
-    c1, c2 = st.columns(2)
-    with c1:
-        cb_rows = st.number_input("Řádky rohů", 3, 40, 23)
-    with c2:
-        cb_cols = st.number_input("Sloupce rohů", 3, 50, 32)
-    sq_mm = st.number_input("Čtverec [mm]", 0.1, 100.0, 5.0, step=0.1)
-
+    st.markdown("## VizioMeter")
+    st.markdown("Analýza objektů a tvarů")
     st.markdown("---")
-    st.markdown("### 🎛 Detekce")
-    canny_low = st.slider("Canny spodní", 0, 200, 50)
-    canny_high = st.slider("Canny horní", 50, 500, 150)
-    min_area = st.slider("Min. plocha [px]", 50, 5000, 500)
-    max_obj = st.slider("Max. objektů (0=vše)", 0, 20, 1)
-    merge = st.toggle("Slučovat kontury", value=True)
-    merge_dist = st.slider("Vzdálenost slučování [px]", 5, 100, 40, disabled=not merge)
 
-    st.markdown("---")
-    st.markdown("### 📏 Ruční px/mm")
-    manual_ppm = st.number_input("Vlastní px/mm (0=auto)", 0.0, 500.0, 0.0, step=0.1)
+    with st.expander("Kalibrace", expanded=True):
+        st.caption("Nastavení px/mm a šachovnice")
+        calib_file = st.file_uploader("Šachovnicový snímek",
+                                      type=["jpg", "jpeg", "png", "bmp"], key="calib")
+        c1, c2 = st.columns(2)
+        with c1:
+            cb_rows = st.number_input("Řádky rohů", 3, 40, 23)
+        with c2:
+            cb_cols = st.number_input("Sloupce rohů", 3, 50, 32)
+        sq_mm = st.number_input("Čtverec [mm]", 0.1, 100.0, 5.0, step=0.1)
+
+    with st.expander("Ruční px/mm", expanded=False):
+        st.caption("Vlastní kalibrační hodnota")
+        manual_ppm = st.number_input("Hodnota (0 = auto)", 0.0, 500.0, 0.0, step=0.1)
+
+    with st.expander("Detekce", expanded=False):
+        st.caption("Parametry hranové detekce a kontur")
+        canny_low = st.slider("Canny spodní", 0, 200, 50)
+        canny_high = st.slider("Canny horní", 50, 500, 150)
+        min_area = st.slider("Min. plocha [px]", 50, 5000, 500)
+        max_obj = st.slider("Max. objektů (0=vše)", 0, 20, 1)
+        merge = st.toggle("Slučovat kontury", value=True)
+        merge_dist = st.slider("Vzdálenost slučování [px]", 5, 100, 40, disabled=not merge)
 
 # ─── Calibration ──────────────────────────────────────────────────────────────
 cam_mtx, dist_c, px_per_mm = None, None, None
 
 if calib_file:
-    with st.spinner("Kalibrace…"):
+    with st.spinner("Probíhá kalibrace..."):
         cam_mtx, dist_c, px_per_mm_cal, debug_img, err = calibrate(
             calib_file.read(), cb_rows, cb_cols, sq_mm)
     if err:
-        st.error(f"❌ {err}")
+        st.error(err)
     else:
         px_per_mm = px_per_mm_cal
-        st.success(f"✅ Kalibrace OK — {px_per_mm:.4f} px/mm")
-        with st.expander("Kalibrační snímek"):
+        st.success(f"Kalibrace úspěšná — {px_per_mm:.4f} px/mm")
+        with st.expander("Kalibrační snímek", expanded=False):
             st.image(cv_to_pil(debug_img), use_container_width=True)
 
 if manual_ppm and manual_ppm > 0:
     px_per_mm = manual_ppm
-    st.info(f"ℹ️ Ruční px/mm: **{px_per_mm:.4f}**")
+    st.markdown(
+        f'<div class="info-box">Ruční px/mm aktivní: {px_per_mm:.4f}</div>',
+        unsafe_allow_html=True
+    )
 
 if not px_per_mm:
     px_per_mm = 5.0
     if not calib_file:
-        st.info("💡 Nahrajte šachovnici nebo zadejte vlastní px/mm. Výchozí: 5.0 px/mm")
+        st.markdown(
+            '<div class="info-box">Nahrajte šachovnici nebo zadejte vlastní px/mm. Aktuální výchozí: 5.0 px/mm</div>',
+            unsafe_allow_html=True
+        )
 
 # ─── Object upload ────────────────────────────────────────────────────────────
-obj_file = st.file_uploader("📷 Snímek měřeného objektu", type=["jpg", "jpeg", "png", "bmp"])
+obj_file = st.file_uploader("Snímek měřeného objektu", type=["jpg", "jpeg", "png", "bmp"])
 
 if not obj_file:
-    st.info("📷 Nahrajte snímek objektu. Volitelně přidejte kalibrační šachovnici pro přesné mm.")
+    st.info("Nahrajte snímek objektu ke zpracování.")
     st.stop()
 
 img_bytes = obj_file.read()
 orig_pil = Image.open(io.BytesIO(img_bytes))
 
 # ─── Detect ───────────────────────────────────────────────────────────────────
-with st.spinner("Detekuji objekty…"):
+with st.spinner("Detekuji objekty..."):
     img_out_bytes, edge_vis_bytes, cnts_s, shapes = detect_objects(
         img_bytes, cam_mtx, dist_c,
         canny_low, canny_high, min_area, max_obj, merge, merge_dist)
@@ -529,27 +559,29 @@ contours = deserialize_contours(cnts_s, shapes)
 
 col_a, col_b = st.columns(2)
 with col_a:
-    st.markdown("### Originál")
+    st.markdown("**Originál**")
     st.image(orig_pil, use_container_width=True)
 with col_b:
-    st.markdown("### Hranový detektor")
+    st.markdown("**Hranový detektor**")
     st.image(cv_to_pil(edge_img), use_container_width=True)
 
 if not contours:
-    st.warning("⚠️ Žádné objekty nebyly nalezeny. Zkuste upravit prahy Canny nebo min. plochu.")
+    st.warning("Žádné objekty nebyly nalezeny. Zkuste upravit prahy Canny nebo min. plochu v postranním panelu.")
     st.stop()
 
 st.markdown("---")
-st.markdown(f"### Nalezeno: {len(contours)} objekt(ů)")
+st.markdown(f"**Nalezeno:** {len(contours)} objektů")
+
+# Akademické barvy (BGR formát)
+HCOLORS = {
+    "par_a": (0, 158, 230),  # Modrá
+    "par_b": (0, 94, 213),  # Oranžová
+    "perp_a": (0, 158, 115),  # Zelená
+    "perp_b": (167, 121, 204),  # Fialová
+    "len_e": (0, 114, 178),  # Tmavě modrá
+}
 
 # ─── Per-object tabs ──────────────────────────────────────────────────────────
-HCOLORS = {
-    "par_a": (0, 255, 179),
-    "par_b": (255, 107, 53),
-    "perp_a": (0, 191, 255),
-    "perp_b": (255, 215, 0),
-    "len_e": (220, 0, 220),
-}
 
 for obj_i, cnt in enumerate(contours):
     area_px = cv2.contourArea(cnt)
@@ -565,15 +597,14 @@ for obj_i, cnt in enumerate(contours):
     edges = get_edges(cnt)
     n_edges = len(edges)
 
-    shape_icons = {"circle": "⭕", "ellipse": "🥚", "polygon": "🔷"}
-    shape_labels = {"circle": "Kruh", "ellipse": "Elipsa / Oválný", "polygon": "Mnohoúhelník / Hranaté"}
+    shape_labels = {"circle": "Kruh", "ellipse": "Elipsa / Ovál", "polygon": "Mnohoúhelník / Hranaté"}
 
     with st.expander(
-            f"🔍 Objekt #{obj_i + 1}  —  {rw_mm:.1f} × {rh_mm:.1f} mm  |  kruhovitost {circ:.0f}%  |  auto: {shape_icons[shape]} {shape}",
+            f"Objekt #{obj_i + 1}  —  {rw_mm:.1f} × {rh_mm:.1f} mm  |  kruhovitost {circ:.0f}%  |  detekce: {shape_labels[shape]}",
             expanded=True,
     ):
 
-        st.markdown("#### Rozměry")
+        st.markdown("**Rozměry**")
         d1, d2, d3, d4, d5 = st.columns(5)
         d1.metric("Šířka", f"{rw_mm:.2f} mm")
         d2.metric("Výška", f"{rh_mm:.2f} mm")
@@ -581,7 +612,7 @@ for obj_i, cnt in enumerate(contours):
         d4.metric("Obvod", f"{peri_mm:.1f} mm")
         d5.metric("Kruhovitost (raw)", f"{circ:.1f} %")
 
-        st.markdown("#### 🔧 Typ analýzy")
+        st.markdown("**Typ analýzy**")
         sel_cols = st.columns([3, 2])
         with sel_cols[0]:
             mode_choice = st.radio(
@@ -589,24 +620,28 @@ for obj_i, cnt in enumerate(contours):
                 options=["polygon", "circle"],
                 index=0 if shape == "polygon" else 1,
                 format_func=lambda x: {
-                    "polygon": "🔷 Hranaté — výběr hran, rovnoběžnost, kolmost",
-                    "circle": "⭕ Kruhové — průměr, radiální odchylka, kruhovitost",
+                    "polygon": "Hranaté — výběr hran, rovnoběžnost, kolmost",
+                    "circle": "Kruhové — průměr, radiální odchylka, kruhovitost",
                 }[x],
                 key=f"mode_{obj_i}",
                 horizontal=True,
             )
         with sel_cols[1]:
-            st.info(
-                f"Auto-detekce: **{shape_icons[shape]} {shape_labels[shape]}** \nKruhovitost (4π·A/P²): **{circ:.1f}%**")
+            st.markdown(
+                f'<div class="info-box">Auto-detekce: {shape_labels[shape]} | Kruhovitost (4π·A/P²): {circ:.1f}%</div>',
+                unsafe_allow_html=True
+            )
 
         st.markdown("---")
 
         if mode_choice == "circle":
             cm = circle_metrics(cnt, px_per_mm)
 
-            st.markdown("#### 📐 Přesné kruhové metriky (z raw kontury)")
-            st.info(
-                "Tyto hodnoty jsou počítány přímo z každého bodu raw kontury — **bez aproximace polygony**. Fitovaný kruh = metoda nejmenších čtverců (Kasa). Radiální odchylka = rozdíl největšího a nejmenšího poloměru od středu.")
+            st.markdown("**Přesné kruhové metriky (z raw kontury)**")
+            st.markdown(
+                '<div class="info-box">Hodnoty jsou počítány přímo z raw kontury. Fitovaný kruh = metoda nejmenších čtverců. Radiální odchylka = rozdíl max a min poloměru od středu.</div>',
+                unsafe_allow_html=True
+            )
 
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Průměr (fit)", f"{cm['r_fit_mm'] * 2:.3f} mm")
@@ -617,11 +652,15 @@ for obj_i, cnt in enumerate(contours):
             roundness_pct = max(0.0, 100.0 * (1.0 - cm["roundness_dev"]))
             st.metric("Kulatost (1 − (Rmax−Rmin)/Rstř)", f"{roundness_pct:.1f} %")
 
-            st.markdown("#### Vizualizace — fitovaný kruh")
+            st.markdown("**Vizualizace — fitovaný kruh**")
             st.markdown("`—— Fitovaný kruh` | `— R max` | `— R min`")
             circ_vis = draw_circle_overlay(base_img, cm, px_per_mm)
-            cv2.drawContours(circ_vis, [cnt], 0, (200, 200, 210), 1, cv2.LINE_AA)
-            st.image(cv_to_pil(circ_vis), use_container_width=True)
+            cv2.drawContours(circ_vis, [cnt], 0, (180, 180, 180), 1, cv2.LINE_AA)
+
+            # --- Zobrazení do středního sloupce ---
+            c_v1, c_v2, c_v3 = st.columns([1, 2, 1])
+            with c_v2:
+                st.image(cv_to_pil(circ_vis), use_container_width=True)
 
             st.markdown("---")
 
@@ -644,19 +683,19 @@ for obj_i, cnt in enumerate(contours):
 
             st.markdown("---")
 
-            st.markdown("#### ⚖ Tolerance kruhu")
+            st.markdown("**Tolerance kruhu**")
             cfg = {}
             tc1, tc2, tc3 = st.columns(3)
 
             with tc1:
-                st.markdown("**◯ Kruhovitost (4π·A/P²)**")
+                st.markdown("**Kruhovitost (4π·A/P²)**")
                 cfg["circ_en"] = st.checkbox("Aktivní", value=True, key=f"circ_en_{obj_i}")
                 cfg["circ_min"] = st.number_input("Min. [%]", 0.0, 100.0, 80.0, step=1.0,
                                                   key=f"circ_min_{obj_i}",
                                                   disabled=not cfg["circ_en"])
 
             with tc2:
-                st.markdown("**⊙ Průměr (fitovaný)**")
+                st.markdown("**Průměr (fitovaný)**")
                 cfg["diam_en"] = st.checkbox("Aktivní", value=True, key=f"diam_en_{obj_i}_diam")
                 cfg["diam_nom"] = st.number_input("Jmenovitý průměr [mm]", 0.0, 2000.0,
                                                   round(cm["r_fit_mm"] * 2, 2), step=0.1,
@@ -670,7 +709,7 @@ for obj_i, cnt in enumerate(contours):
                                                     disabled=not cfg["diam_en"])
 
             with tc3:
-                st.markdown("**〰 Radiální odchylka**")
+                st.markdown("**Radiální odchylka**")
                 cfg["rad_en"] = st.checkbox("Aktivní", value=True, key=f"rad_en_{obj_i}_rad")
                 _rad_default = round(cm["dev_mm"] * 1.5 + 0.1, 2)
                 _rad_max_limit = max(100.0, _rad_default * 2)
@@ -681,7 +720,7 @@ for obj_i, cnt in enumerate(contours):
 
             st.markdown("---")
 
-            st.markdown("#### 📊 Výsledky")
+            st.markdown("**Výsledky**")
             rows_html, pass_list, export_data = [], [], []
 
             if cfg["circ_en"]:
@@ -723,67 +762,75 @@ for obj_i, cnt in enumerate(contours):
             if pass_list:
                 n_ok = sum(pass_list)
                 if n_ok == len(pass_list):
-                    st.success(f"✅ DÍLEK V TOLERANCI | {n_ok}/{len(pass_list)} kontrol prošlo")
+                    st.success(f"DÍL V TOLERANCI | {n_ok}/{len(pass_list)} kontrol prošlo")
                 else:
-                    st.error(f"❌ MIMO TOLERANCI | {n_ok}/{len(pass_list)} kontrol prošlo")
+                    st.error(f"MIMO TOLERANCI | {n_ok}/{len(pass_list)} kontrol prošlo")
 
             img_buf = io.BytesIO()
-            cv_to_pil(circ_vis).save(img_buf, format="JPEG", quality=92)
+            cv_to_pil(circ_vis).save(img_buf, format="PNG")
 
             df_export = pd.DataFrame(export_data)
             csv_data = df_export.to_csv(index=False).encode('utf-8-sig')
 
             dl_col1, dl_col2 = st.columns(2)
             with dl_col1:
-                st.download_button(f"📷 Stáhnout snímek (Objekt #{obj_i + 1})",
+                st.download_button(f"Stáhnout snímek (Objekt #{obj_i + 1})",
                                    data=img_buf.getvalue(),
-                                   file_name=f"viziometer_obj{obj_i + 1}.jpg",
-                                   mime="image/jpeg", key=f"img_dl_{obj_i}")
+                                   file_name=f"viziometer_obj{obj_i + 1}.png",
+                                   mime="image/png", key=f"img_dl_{obj_i}", use_container_width=True)
             with dl_col2:
-                st.download_button(f"📊 Stáhnout tabulku s daty (CSV)",
+                st.download_button(f"Stáhnout tabulku s daty (CSV)",
                                    data=csv_data,
                                    file_name=f"viziometer_obj{obj_i + 1}_data.csv",
-                                   mime="text/csv", key=f"csv_dl_{obj_i}")
+                                   mime="text/csv", key=f"csv_dl_{obj_i}", use_container_width=True)
 
         else:  # mode_choice == 'polygon'
+            # Vědecká Okabe-Ito paleta (colorblind-friendly), formát BGR
             PALETTE = [
-                (0, 255, 179), (255, 107, 53), (0, 191, 255), (255, 215, 0),
-                (220, 0, 220), (0, 255, 80), (255, 60, 120), (80, 200, 255),
-                (255, 160, 0), (160, 255, 60),
+                (0, 158, 230),  # Modrá
+                (0, 114, 178),  # Tmavě modrá
+                (0, 158, 115),  # Zelená
+                (10, 194, 213),  # Světle modrá
+                (0, 94, 213),  # Oranžová
+                (167, 121, 204),  # Fialová
+                (0, 0, 0)  # Černá
             ]
 
-            # Inicializace pole pro uložení dat pro export (seznam hran a tolerance)
             export_data = []
 
-            st.markdown("#### 🗺 Mapa hran")
-            st.info(
-                f"Detekováno **{n_edges} hran**. Čísla hran jsou označena v náhledu. Vyberte níže, které hrany zkoumat.")
+            st.markdown("**Mapa hran**")
+            st.markdown(
+                f'<div class="info-box">Detekováno {n_edges} hran. Čísla hran jsou označena v náhledu. Nastavte konfiguraci níže.</div>',
+                unsafe_allow_html=True
+            )
 
             preview_highlights = {i: PALETTE[i % len(PALETTE)] for i in range(n_edges)}
             edge_preview = draw_edge_map(base_img, edges, preview_highlights, raw_cnt=cnt)
-            cv2.rectangle(edge_preview, (x, y), (x + bw, y + bh), (50, 60, 80), 1)
+            cv2.rectangle(edge_preview, (x, y), (x + bw, y + bh), (150, 150, 150), 1)
             preview_legend = [
                 (PALETTE[i % len(PALETTE)],
                  f"H{i + 1}  {edges[i]['length'] / px_per_mm:.1f} mm  {edges[i]['angle']:.1f} deg")
                 for i in range(n_edges)
             ]
             edge_preview = draw_legend_pil(edge_preview, preview_legend)
-            st.image(cv_to_pil(edge_preview), use_container_width=True)
 
-            st.markdown("#### 📏 Seznam všech hran")
+            # --- Zobrazení do středního sloupce ---
+            c_p1, c_p2, c_p3 = st.columns([1, 2, 1])
+            with c_p2:
+                st.image(cv_to_pil(edge_preview), use_container_width=True)
+
+            st.markdown("**Seznam všech hran**")
             edges_df_data = []
 
             for i, e in enumerate(edges):
                 length_mm = e['length'] / px_per_mm
 
-                # Zápis do tabulky v UI
                 edges_df_data.append({
                     "Hrana": f"H{i + 1}",
                     "Délka [mm]": round(length_mm, 3),
                     "Úhel [°]": round(e['angle'], 1)
                 })
 
-                # Zápis do exportních dat
                 export_data.append({
                     "Veličina": f"Délka hrany H{i + 1}",
                     "Naměřeno": round(length_mm, 3),
@@ -793,12 +840,11 @@ for obj_i, cnt in enumerate(contours):
                     "Výsledek": "Info"
                 })
 
-            # Interaktivní streamit dataframe namísto markdown tabulky
             st.dataframe(pd.DataFrame(edges_df_data), use_container_width=True)
 
             st.markdown("---")
 
-            st.markdown("#### ⚖ Konfigurace tolerancí")
+            st.markdown("**Konfigurace tolerancí**")
             nums = list(range(1, n_edges + 1))
 
 
@@ -810,7 +856,7 @@ for obj_i, cnt in enumerate(contours):
             cfg = {}
 
             with st.container():
-                st.markdown("**⬌ Rovnoběžnost dvou hran**")
+                st.markdown("**Rovnoběžnost dvou hran**")
                 pc = st.columns([1, 1, 1, 1])
                 cfg["par_en"] = pc[0].checkbox("Aktivní", value=True, key=f"par_en_{obj_i}")
                 cfg["par_a"] = pc[1].selectbox("Hrana A", nums, 0, key=f"par_a_{obj_i}",
@@ -825,7 +871,7 @@ for obj_i, cnt in enumerate(contours):
                                                     disabled=not cfg["par_en"])
 
             with st.container():
-                st.markdown("**⊾ Kolmost dvou hran**")
+                st.markdown("**Kolmost dvou hran**")
                 qc = st.columns([1, 1, 1, 1])
                 cfg["perp_en"] = qc[0].checkbox("Aktivní", value=True, key=f"perp_en_{obj_i}")
                 cfg["perp_a"] = qc[1].selectbox("Hrana A", nums, 0, key=f"perp_a_{obj_i}",
@@ -840,7 +886,7 @@ for obj_i, cnt in enumerate(contours):
                                                      disabled=not cfg["perp_en"])
 
             with st.container():
-                st.markdown("**↔ Délka vybrané hrany**")
+                st.markdown("**Délka vybrané hrany**")
                 lc = st.columns([1, 1, 1, 1, 1])
                 cfg["len_en"] = lc[0].checkbox("Aktivní", value=False, key=f"len_en_{obj_i}")
                 cfg["len_edge"] = lc[1].selectbox("Zkoumaná hrana", nums, 0, key=f"len_edge_{obj_i}",
@@ -857,7 +903,7 @@ for obj_i, cnt in enumerate(contours):
                                                       disabled=not cfg["len_en"])
 
             with st.container():
-                st.markdown("**📐 Rozměr objektu (šířka / výška)**")
+                st.markdown("**Rozměr objektu (šířka / výška)**")
                 dc = st.columns([1, 1, 1, 1, 1, 1])
                 cfg["dim_en"] = dc[0].checkbox("Aktivní", value=True, key=f"dim_en_{obj_i}")
                 cfg["dim_axis"] = dc[1].selectbox("Osa", ["Šířka", "Výška", "Obě"],
@@ -880,7 +926,7 @@ for obj_i, cnt in enumerate(contours):
 
             st.markdown("---")
 
-            st.markdown("#### 📊 Výsledky tolerance")
+            st.markdown("**Výsledky tolerance**")
             rows_html, pass_list, highlights = [], [], {}
 
             if cfg["par_en"]:
@@ -888,7 +934,7 @@ for obj_i, cnt in enumerate(contours):
                 dev = parallelism_deg(edges, ia, ib)
                 ok = dev <= cfg["par_tol"]
                 pass_list.append(ok)
-                r_md, r_data = tol_row(f"Rovnoběžnost (H{ia + 1} ∥ H{ib + 1})", dev, 0.0, cfg["par_tol"], "°",
+                r_md, r_data = tol_row(f"Rovnoběžnost (H{ia + 1} | H{ib + 1})", dev, 0.0, cfg["par_tol"], "°",
                                        extra=f" — odchylka **{dev:.3f}°**")
                 highlights[ia] = HCOLORS["par_a"]
                 highlights[ib] = HCOLORS["par_b"]
@@ -902,7 +948,7 @@ for obj_i, cnt in enumerate(contours):
                 dev = perpendicularity_deg(edges, ia, ib)
                 ok = dev <= cfg["perp_tol"]
                 pass_list.append(ok)
-                r_md, r_data = tol_row(f"Kolmost (H{ia + 1} ⊾ H{ib + 1})", dev, 0.0, cfg["perp_tol"], "°",
+                r_md, r_data = tol_row(f"Kolmost (H{ia + 1} | H{ib + 1})", dev, 0.0, cfg["perp_tol"], "°",
                                        extra=f" — odchylka od 90°: **{dev:.3f}°**")
                 highlights[ia] = HCOLORS["perp_a"]
                 highlights[ib] = HCOLORS["perp_b"]
@@ -923,7 +969,7 @@ for obj_i, cnt in enumerate(contours):
                                            extra=f" — jmenovitá **{cfg['len_nom']:.1f} mm**")
                     highlights[ie] = HCOLORS["len_e"]
                 else:
-                    r_md = "❌ Délka: hrana neexistuje"
+                    r_md = "[NOK] Délka: hrana neexistuje"
                     r_data = {"Veličina": "Tolerance délky hrany", "Naměřeno": None, "Minimum": None, "Maximum": None,
                               "Jednotka": "mm", "Výsledek": "Chyba (hrana chybí)"}
             else:
@@ -961,14 +1007,12 @@ for obj_i, cnt in enumerate(contours):
             if pass_list:
                 n_ok = sum(pass_list)
                 if n_ok == len(pass_list):
-                    st.success(f"✅ DÍLEK V TOLERANCI | {n_ok}/{len(pass_list)} kontrol prošlo")
+                    st.success(f"DÍL V TOLERANCI | {n_ok}/{len(pass_list)} kontrol prošlo")
                 else:
-                    st.error(f"❌ MIMO TOLERANCI | {n_ok}/{len(pass_list)} kontrol prošlo")
+                    st.error(f"MIMO TOLERANCI | {n_ok}/{len(pass_list)} kontrol prošlo")
 
-            st.markdown("#### Vizualizace vybraných hran")
+            st.markdown("**Vizualizace vybraných hran**")
             annotated = draw_edge_map(base_img, edges, highlights, raw_cnt=cnt)
-            box_pts = cv2.boxPoints(rect).astype(np.intp)
-            cv2.drawContours(annotated, [box_pts], 0, (50, 65, 90), 2)
 
             legend_defs = []
             if cfg["par_en"]:
@@ -994,22 +1038,26 @@ for obj_i, cnt in enumerate(contours):
                      f"H{ie + 1}  delka  ({edges[ie]['length'] / px_per_mm:.1f} mm, {edges[ie]['angle']:.1f} deg)")
                 )
             annotated = draw_legend_pil(annotated, legend_defs)
-            st.image(cv_to_pil(annotated), use_container_width=True)
+
+            # --- Zobrazení do středního sloupce ---
+            c_a1, c_a2, c_a3 = st.columns([1, 2, 1])
+            with c_a2:
+                st.image(cv_to_pil(annotated), use_container_width=True)
 
             img_buf = io.BytesIO()
-            cv_to_pil(annotated).save(img_buf, format="JPEG", quality=92)
+            cv_to_pil(annotated).save(img_buf, format="PNG")
 
             df_export = pd.DataFrame(export_data)
             csv_data = df_export.to_csv(index=False).encode('utf-8-sig')
 
             dl_col1, dl_col2 = st.columns(2)
             with dl_col1:
-                st.download_button(f"📷 Stáhnout snímek (Objekt #{obj_i + 1})",
+                st.download_button(f"Stáhnout snímek (Objekt #{obj_i + 1})",
                                    data=img_buf.getvalue(),
-                                   file_name=f"viziometer_obj{obj_i + 1}.jpg",
-                                   mime="image/jpeg", key=f"img_dl_{obj_i}")
+                                   file_name=f"viziometer_obj{obj_i + 1}.png",
+                                   mime="image/png", key=f"img_dl_{obj_i}", use_container_width=True)
             with dl_col2:
-                st.download_button(f"📊 Stáhnout tabulku s daty (CSV)",
+                st.download_button(f"Stáhnout tabulku s daty (CSV)",
                                    data=csv_data,
                                    file_name=f"viziometer_obj{obj_i + 1}_data.csv",
-                                   mime="text/csv", key=f"csv_dl_{obj_i}")
+                                   mime="text/csv", key=f"csv_dl_{obj_i}", use_container_width=True)
