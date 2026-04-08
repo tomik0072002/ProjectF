@@ -36,6 +36,15 @@ st.markdown("""
     margin: 6px 0;
     color: #7ab3ff;
 }
+.warn-box {
+    background: rgba(220,160,0,0.08);
+    border: 1px solid rgba(220,160,0,0.35);
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-size: 0.78rem;
+    margin: 6px 0;
+    color: #ffcc55;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -48,29 +57,31 @@ def compute_calibration(cal: dict) -> dict:
     """
     Vypočítá kalibrační koeficienty ze zadaných fyzických parametrů.
 
-    Geometrie: kamera snímá kolmo shora, horizontální laserový paprsek
-    dopadá na objekt pod triangulačním úhlem α od vertikály.
+    Geometrie: kamera snímá kolmo shora, laserový paprsek dopadá na objekt
+    pod triangulačním úhlem α od vertikály.
+
+    ── OPRAVA: Výběr správné osy senzoru podle orientace laseru ──────────
+      laser_axis == 0  → laser je HORIZONTÁLNÍ → střed laseru se pohybuje
+                         ve směru Y snímku → používáme mm_per_px_sensor_y
+      laser_axis == 1  → laser je VERTIKÁLNÍ   → střed laseru se pohybuje
+                         ve směru X snímku → používáme mm_per_px_sensor_x
 
     ── Osa X (šířka skenované plochy – příčná osa senzoru) ──────────────
-      FOV_x      = sensor_width_mm / focal_length_mm × working_distance_mm
+      FOV_x       = sensor_width_mm / focal_length_mm × working_distance_mm
       mm_per_px_x = FOV_x / sensor_res_x
 
     ── Osa Y (HLOUBKA – triangulační přepočet) ──────────────────────────
-      Laser leží v rovině kamery a objektu. Horizontální vzdálenost laseru
-      od optické osy kamery je `laser_offset_mm` (d), pracovní vzdálenost
-      kamery je H.  Triangulační úhel:
-          α = arctan(d / H)
+      Triangulační úhel:
+          α = arctan(laser_offset_mm / working_distance_mm)
 
-      Výchylka středu laseru na senzoru o Δy_px odpovídá výškovému rozdílu:
-          Δh = Δy_mm / tan(α)   kde  Δy_mm = Δy_px × mm_per_px_sensor_y
+      Výchylka středu laseru na senzoru o Δ_px odpovídá výškovému rozdílu:
+          Δh = Δ_mm / tan(α)   kde Δ_mm = Δ_px × mm_per_px_sensor_[xy]
 
-      Kombinovaný koeficient (px → výška v mm):
-          depth_per_px = mm_per_px_sensor_y / tan(α)
-                       = (FOV_y / res_y) / (d / H)
-                       = (FOV_y × H) / (res_y × d)
+      Kombinovaný koeficient (px výchylky → mm výšky objektu):
+          depth_per_px = mm_per_px_sensor_[xy] / tan(α)
 
-      Pokud d = 0 (laser přímo nad objektem, žádná triangulace) → depth_per_px = ∞
-      V tom případě hloubkový přepočet nelze provést a vrátíme varování.
+      DŮLEŽITÉ: Δ_px = (naměřená pozice laseru) − (referenční pozice laseru
+      na rovném povrchu). Tento odečet se provádí v px_to_mm_map(), ne zde.
 
     ── Osa Z (posuv objektu mezi snímky) ────────────────────────────────
       Zadán přímo jako mm/snímek.
@@ -82,56 +93,97 @@ def compute_calibration(cal: dict) -> dict:
     res_x      = cal["sensor_res_x"]
     res_y      = cal["sensor_res_y"]
     step_mm    = cal["step_mm_per_frame"]
-    d          = cal["laser_offset_mm"]          # horizontální offset laseru od osy kamery
+    d          = cal["laser_offset_mm"]
+    laser_axis = cal["laser_axis"]           # ← NOVÉ: 0 = horizontální laser, 1 = vertikální
 
     if focal_mm <= 0 or res_x <= 0 or res_y <= 0:
         return {"mm_per_px_x": 1.0, "depth_per_px": 1.0, "mm_per_px_z": step_mm,
                 "fov_x_mm": 0.0, "fov_y_mm": 0.0,
-                "alpha_deg": 0.0, "mm_per_px_sensor_y": 1.0,
+                "alpha_deg": 0.0, "mm_per_px_sensor_laser": 1.0,
                 "triangulation_valid": False, "valid": False}
 
     fov_x = sensor_w / focal_mm * work_mm
     fov_y = sensor_h / focal_mm * work_mm
 
-    mm_per_px_x        = fov_x / res_x          # příčné rozlišení [mm/px]
-    mm_per_px_sensor_y = fov_y / res_y          # přímé senzorové rozlišení v ose laseru [mm/px]
+    mm_per_px_sensor_x = fov_x / res_x      # přímé senzorové rozlišení v ose X [mm/px]
+    mm_per_px_sensor_y = fov_y / res_y      # přímé senzorové rozlišení v ose Y [mm/px]
+    mm_per_px_x        = mm_per_px_sensor_x  # příčné rozlišení (pro zobrazení osy senzoru)
+
+    # ── OPRAVA č. 1: volba správné senzorové osy podle orientace laseru ──
+    # Horizontální laser (axis=0): střed laseru se mění v ose Y snímku → sensor_y
+    # Vertikální laser  (axis=1): střed laseru se mění v ose X snímku → sensor_x
+    if laser_axis == 0:
+        mm_per_px_sensor_laser = mm_per_px_sensor_y
+    else:
+        mm_per_px_sensor_laser = mm_per_px_sensor_x
 
     # Triangulační úhel a koeficient hloubky
     if d > 0:
         alpha_rad    = np.arctan(d / work_mm)
         alpha_deg    = float(np.degrees(alpha_rad))
-        depth_per_px = mm_per_px_sensor_y / np.tan(alpha_rad)   # [mm výšky / px výchylky]
+        # depth_per_px: o kolik mm výšky objektu odpovídá 1 px výchylky laseru
+        # Δh [mm] = Δ_sensor [mm] / tan(α) = Δ_px × mm_per_px_sensor_laser / tan(α)
+        depth_per_px = mm_per_px_sensor_laser / np.tan(alpha_rad)
         triangulation_valid = True
     else:
         alpha_deg    = 0.0
-        depth_per_px = mm_per_px_sensor_y       # bez triangulace – jen lineární přepočet
+        # Bez offsetu nelze triangulovat – vrátíme přímý senzorový přepočet
+        # a nastavíme varování; výsledky v mm budou mít pouze lineární smysl.
+        depth_per_px = mm_per_px_sensor_laser
         triangulation_valid = False
 
     return {
-        "mm_per_px_x":        mm_per_px_x,
-        "mm_per_px_sensor_y": mm_per_px_sensor_y,
-        "depth_per_px":       depth_per_px,      # hlavní koeficient: px výchylky → mm výšky
-        "mm_per_px_z":        step_mm,
-        "fov_x_mm":           round(fov_x, 2),
-        "fov_y_mm":           round(fov_y, 2),
-        "alpha_deg":          round(alpha_deg, 2),
-        "triangulation_valid": triangulation_valid,
+        "mm_per_px_x":             mm_per_px_x,
+        "mm_per_px_sensor_x":      mm_per_px_sensor_x,
+        "mm_per_px_sensor_y":      mm_per_px_sensor_y,
+        "mm_per_px_sensor_laser":  mm_per_px_sensor_laser,  # osa, ve které se pohybuje laser
+        "depth_per_px":            depth_per_px,             # hlavní koeficient: px výchylky → mm výšky
+        "mm_per_px_z":             step_mm,
+        "fov_x_mm":                round(fov_x, 2),
+        "fov_y_mm":                round(fov_y, 2),
+        "alpha_deg":               round(alpha_deg, 2),
+        "laser_axis":              laser_axis,
+        "triangulation_valid":     triangulation_valid,
         "valid": True,
     }
 
 
-def px_to_mm_map(depth_map_px: np.ndarray, calib: dict, use_mm: bool) -> np.ndarray:
+def px_to_mm_map(depth_map_px: np.ndarray, calib: dict, use_mm: bool,
+                 laser_ref_px: float = 0.0) -> np.ndarray:
     """
-    Převede depth mapu z px výchylky laseru na mm výšky objektu.
+    Převede depth mapu z absolutní pozice laseru [px] na výšku objektu [mm].
 
-    Používá triangulační koeficient depth_per_px:
-        Δh [mm] = Δy [px] × depth_per_px
-    kde depth_per_px = (FOV_y / res_y) / tan(α) a α = arctan(d / H).
-    Nuly (= žádný detekovaný bod) zůstanou nulami.
+    ── OPRAVA č. 2: odečtení referenční pozice ──────────────────────────
+      depth_map_px obsahuje ABSOLUTNÍ pozici středu laseru na senzoru [px].
+      Pro výpočet výšky objektu potřebujeme RELATIVNÍ výchylku od referenční
+      polohy (poloha laseru na rovném kalibračním povrchu):
+
+          Δ_px = depth_map_px − laser_ref_px
+
+      Pak platí:
+          Δh [mm] = Δ_px × depth_per_px
+
+      Záporná výchylka = objekt je výše než referenční povrch (laser se na
+      senzoru posunul opačným směrem). Nuly (= žádný detekovaný bod)
+      zůstanou nulami i po přepočtu.
+
+    Parametry
+    ----------
+    depth_map_px  : 2D pole absolutních pozic laseru [px]; 0 = bez detekce
+    calib         : kalibrační slovník z compute_calibration()
+    use_mm        : True → přepočítat na mm; False → vrátit Δ_px
+    laser_ref_px  : referenční poloha laseru na rovném povrchu [px]
+                    (měřeno za stejných podmínek jako sken)
     """
     if not use_mm:
-        return depth_map_px
-    result = depth_map_px.astype(np.float64) * calib["depth_per_px"]
+        # I v px režimu vrátíme relativní výchylku, aby byl nulový bod smysluplný
+        result = depth_map_px.astype(np.float64) - laser_ref_px
+        result[depth_map_px == 0] = 0.0
+        return result
+
+    # Relativní výchylka [px] → výška objektu [mm]
+    delta_px = depth_map_px.astype(np.float64) - laser_ref_px
+    result   = delta_px * calib["depth_per_px"]
     result[depth_map_px == 0] = 0.0
     return result
 
@@ -147,7 +199,7 @@ def axis_labels(use_mm: bool, calib: dict):
         }
     return {
         "sensor_ax": "Pozice na senzoru [px]",
-        "laser_ax":  "Výchylka laseru [px]",
+        "laser_ax":  "Výchylka laseru Δ [px]",   # upřesněno: jde o výchylku, ne absolutní pozici
         "frame_ax":  "Číslo snímku",
         "unit":      "px",
     }
@@ -295,9 +347,7 @@ def build_axes(depth_map_disp: np.ndarray, use_mm: bool, calib: dict):
     n_rows, n_cols = depth_map_disp.shape  # rows = senzor, cols = snímky
 
     if use_mm:
-        # Osa Z (sloupcová) = posuv objektu
         x_axis = np.arange(n_cols) * calib["mm_per_px_z"]
-        # Osa senzoru (řádková) – pixely senzoru na mm
         y_axis = np.arange(n_rows) * calib["mm_per_px_x"]
     else:
         x_axis = np.arange(n_cols)
@@ -307,9 +357,9 @@ def build_axes(depth_map_disp: np.ndarray, use_mm: bool, calib: dict):
 
 
 def create_figure(depth_map_px: np.ndarray, stats_px: dict, file_name: str,
-                  colormap: str, use_mm: bool, calib: dict):
+                  colormap: str, use_mm: bool, calib: dict, laser_ref_px: float):
 
-    dm_disp = px_to_mm_map(depth_map_px, calib, use_mm)
+    dm_disp = px_to_mm_map(depth_map_px, calib, use_mm, laser_ref_px)
     lbl = axis_labels(use_mm, calib)
     x_axis, y_axis = build_axes(dm_disp, use_mm, calib)
 
@@ -336,7 +386,6 @@ def create_figure(depth_map_px: np.ndarray, stats_px: dict, file_name: str,
     cb.ax.yaxis.set_tick_params(color='gray')
     plt.setp(cb.ax.yaxis.get_ticklabels(), color='gray')
 
-    # Statistiky zobrazit vždy v aktuální jednotce
     nz = nonzero_disp
     s_min  = round(float(nz.min()),  4) if nz.size else 0
     s_max  = round(float(nz.max()),  4) if nz.size else 0
@@ -387,11 +436,33 @@ def create_figure(depth_map_px: np.ndarray, stats_px: dict, file_name: str,
 
 
 def create_3d_figure(depth_map_px: np.ndarray, colormap: str, downsample: int,
-                     use_mm: bool, calib: dict) -> go.Figure:
-
+                     use_mm: bool, calib: dict, laser_ref_px: float,
+                     z_clip_sigma: float = 3.0) -> go.Figure:
+    """
+    Parametry
+    ----------
+    z_clip_sigma : float
+        Outliery nad/pod (medián ± z_clip_sigma × std) jsou nahrazeny NaN,
+        aby neroztáhly rozsah osy Z. 0 = žádné oříznutí.
+    """
     dm = depth_map_px[::downsample, ::downsample].copy()
-    dm_disp = px_to_mm_map(dm, calib, use_mm)
+    dm_disp = px_to_mm_map(dm, calib, use_mm, laser_ref_px)
+
+    # Nuly → NaN (žádná detekce)
     dm_plot = np.where(dm_disp == 0, np.nan, dm_disp)
+
+    # ── Oříznutí outlierů v ose Z ─────────────────────────────────────────
+    # Svislé špičky (outliery) vznikají chybnou detekcí laseru a výrazně
+    # zkreslují měřítko osy Z. Nahradíme je NaN, graf pak zobrazí skutečný
+    # povrch objektu bez deformace měřítka.
+    if z_clip_sigma > 0:
+        valid = dm_plot[np.isfinite(dm_plot)]
+        if valid.size > 0:
+            med = np.median(valid)
+            std = np.std(valid)
+            lo  = med - z_clip_sigma * std
+            hi  = med + z_clip_sigma * std
+            dm_plot = np.where((dm_plot < lo) | (dm_plot > hi), np.nan, dm_plot)
 
     lbl = axis_labels(use_mm, calib)
 
@@ -401,15 +472,28 @@ def create_3d_figure(depth_map_px: np.ndarray, colormap: str, downsample: int,
 
     rows, cols = dm_plot.shape
 
+    # ── Osy X a Y ─────────────────────────────────────────────────────────
+    # go.Surface: matice dm_plot má tvar (rows, cols).
+    #   rows = osa senzoru  → přiřadíme ose Y scény  → "Pozice na senzoru"
+    #   cols = osa snímků   → přiřadíme ose X scény  → "Posuv objektu"
+    # Dříve bylo x←cols, y←rows, ale popisky xaxis/yaxis byly prohozeny,
+    # takže v grafu stál "Posuv objektu" podél senzorové osy a naopak.
     if use_mm:
-        x = np.arange(cols) * downsample * calib["mm_per_px_z"]
-        y = np.arange(rows) * downsample * calib["mm_per_px_x"]
+        x_sensor = np.arange(rows) * downsample * calib["mm_per_px_x"]   # senzor → osa X
+        y_frame  = np.arange(cols) * downsample * calib["mm_per_px_z"]   # snímky → osa Y
     else:
-        x = np.arange(cols) * downsample
-        y = np.arange(rows) * downsample
+        x_sensor = np.arange(rows) * downsample
+        y_frame  = np.arange(cols) * downsample
 
+    # go.Surface očekává: x má délku cols (druhá dimenze), y má délku rows (první dimenze)
+    # Proto transponujeme matici a přiřadíme osy správně:
+    #   x = x_sensor (délka rows → po transponování cols)
+    #   y = y_frame  (délka cols → po transponování rows)
     fig = go.Figure(data=[go.Surface(
-        z=dm_plot, x=x, y=y, colorscale=plotly_cmap,
+        z=dm_plot.T,          # transponujeme: (rows,cols) → (cols,rows) → x=senzor, y=snímky
+        x=x_sensor,           # osa X = pozice na senzoru
+        y=y_frame,            # osa Y = posuv objektu (snímky)
+        colorscale=plotly_cmap,
         colorbar=dict(title=dict(text=lbl["laser_ax"], side="right"), thickness=15),
         lighting=dict(ambient=0.6, diffuse=0.8, specular=0.3, roughness=0.5),
     )])
@@ -421,8 +505,8 @@ def create_3d_figure(depth_map_px: np.ndarray, colormap: str, downsample: int,
         title=dict(text="3D Depth mapa", font=dict(size=14), x=0.02),
         scene=dict(
             bgcolor='rgba(0,0,0,0)',
-            xaxis=dict(title=dict(text=lbl["frame_ax"])),
-            yaxis=dict(title=dict(text=lbl["sensor_ax"])),
+            xaxis=dict(title=dict(text=lbl["sensor_ax"])),   # X = senzor
+            yaxis=dict(title=dict(text=lbl["frame_ax"])),    # Y = posuv
             zaxis=dict(title=dict(text=lbl["laser_ax"]), autorange='reversed'),
             camera=dict(eye=dict(x=1.6, y=-1.6, z=1.2)),
         ),
@@ -440,7 +524,7 @@ with st.sidebar:
     st.markdown("---")
 
     # ── Kalibrace ──────────────────────────────────────────────
-    st.markdown("### ⚙️ Kalibrace hardware")
+    st.markdown("### Nastavení triangulace")
     with st.expander("Parametry kamery a optiky", expanded=True):
         st.caption(
             "Fyzické parametry optické soustavy. "
@@ -453,97 +537,69 @@ with st.sidebar:
         st.markdown("**Optika**")
         focal_length_mm = st.number_input(
             "Ohnisková vzdálenost [mm]", min_value=0.1, value=8.0, step=0.5,
-            format="%.2f",
-            help="Ohnisková vzdálenost objektivu v mm."
+            format="%.2f"
         )
         working_distance_mm = st.number_input(
-            "Pracovní vzdálenost (kamera → objekt) [mm]", min_value=1.0, value=300.0, step=5.0,
-            format="%.1f",
-            help="Vzdálenost středu objektivu od skenované plochy."
+            "Pracovní vzdálenost (kamera → objekt) [mm]", min_value=1.0, value=1000.0, step=5.0,
+            format="%.1f"
         )
 
         st.markdown("**Senzor kamery**")
         col_sx, col_sy = st.columns(2)
         with col_sx:
             sensor_width_mm = st.number_input(
-                "Šířka senzoru [mm]", min_value=0.1, value=6.276, step=0.1,
-                format="%.3f",
-                help="Fyzická šířka CMOS/CCD čipu v mm."
+                "Šířka senzoru [mm]", min_value=0.1, value=5.02, step=0.1,
+                format="%.3f"
             )
             sensor_res_x = st.number_input(
-                "Rozlišení X [px]", min_value=1, value=2448, step=1,
-                help="Počet pixelů na šířku snímku."
+                "Rozlišení X [px]", min_value=1, value=1456, step=1
             )
         with col_sy:
             sensor_height_mm = st.number_input(
-                "Výška senzoru [mm]", min_value=0.1, value=4.712, step=0.1,
-                format="%.3f",
-                help="Fyzická výška CMOS/CCD čipu v mm."
+                "Výška senzoru [mm]", min_value=0.1, value=3.75, step=0.1,
+                format="%.3f"
             )
             sensor_res_y = st.number_input(
-                "Rozlišení Y [px]", min_value=1, value=2048, step=1,
-                help="Počet pixelů na výšku snímku."
+                "Rozlišení Y [px]", min_value=1, value=1088, step=1
             )
 
         st.markdown("**Triangulační geometrie laseru**")
         laser_offset_mm = st.number_input(
-            "Horizontální offset laseru od osy kamery [mm]", min_value=0.0, value=50.0, step=1.0,
-            format="%.1f",
+            "Horizontální offset laseru od osy kamery [mm]", min_value=0.0, value=300.0, step=1.0,
+            format="%.1f"
+        )
+
+        # ── NOVÉ: Referenční pozice laseru ─────────────────────────────
+        st.markdown("**Referenční poloha laseru**")
+        st.caption(
+            "Poloha středu laseru na senzoru při skenování rovného "
+            "referenčního povrchu ve stejné pracovní vzdálenosti [px]. "
+            "Slouží jako nulová hladina pro výpočet výšky objektu. "
+            "Pokud neznáte hodnotu, spusťte sken rovné plochy a odečtěte "
+            "průměrnou hodnotu z depth mapy."
+        )
+        laser_ref_px = st.number_input(
+            "Referenční pozice laseru [px]", min_value=0.0, value=0.0, step=1.0,
+            format="%.2f",
             help=(
-                "Vzdálenost mezi optickou osou kamery a laserovým paprskem, "
-                "měřeno v rovině skenování (horizontálně). "
-                "Z tohoto offsetu a pracovní vzdálenosti se vypočítá triangulační úhel α = arctan(d / H). "
-                "Hodnota 0 = laser přímo pod kamerou, triangulace není možná."
+                "Absolutní px pozice laseru na rovném povrchu. "
+                "Výsledná depth mapa = (naměřená pozice) − (tato hodnota). "
+                "Při hodnotě 0 jsou výsledky absolutní pozice laseru, ne výška."
             )
         )
+        if laser_ref_px == 0.0 and use_mm:
+            st.markdown(
+                '<div class="warn-box">⚠ Referenční pozice = 0. '
+                'Výsledky v mm jsou absolutní poloha laseru, '
+                'ne výška objektu. Zadejte referenční hodnotu pro správný přepočet.</div>',
+                unsafe_allow_html=True
+            )
 
         st.markdown("**Pohyb objektu**")
         step_mm_per_frame = st.number_input(
-            "Posuv mezi snímky [mm/snímek]", min_value=0.0001, value=0.1, step=0.01,
-            format="%.4f",
-            help="O kolik mm se objekt posune mezi dvěma po sobě jdoucími snímky."
+            "Posuv mezi snímky [mm/snímek]", min_value=0.0001, value=0.25, step=0.01,
+            format="%.4f"
         )
-
-        # Sestavení dict kalibrace a výpočet
-        cal_input = dict(
-            focal_length_mm=focal_length_mm,
-            working_distance_mm=working_distance_mm,
-            sensor_width_mm=sensor_width_mm,
-            sensor_height_mm=sensor_height_mm,
-            sensor_res_x=sensor_res_x,
-            sensor_res_y=sensor_res_y,
-            laser_offset_mm=laser_offset_mm,
-            step_mm_per_frame=step_mm_per_frame,
-        )
-        calib = compute_calibration(cal_input)
-
-        # Zobrazení vypočtených hodnot
-        if calib["valid"]:
-            if calib["triangulation_valid"]:
-                triang_line = (
-                    f'Triangulační úhel α: <b>{calib["alpha_deg"]:.2f} °</b><br>'
-                    f'Senzor Y: <b>{calib["mm_per_px_sensor_y"]:.4f} mm/px</b> (přímý přepočet senzoru)<br>'
-                    f'<b>Hloubka: {calib["depth_per_px"]:.4f} mm/px výchylky</b> (po triangulaci)'
-                )
-            else:
-                triang_line = (
-                    f'<span style="color:#ffaa44">⚠ Horizontální offset = 0 – triangulace není aktivní. '
-                    f'Používá se přímý senzorový přepočet: {calib["mm_per_px_sensor_y"]:.4f} mm/px.</span>'
-                )
-            st.markdown(
-                f'<div class="cal-box">'
-                f'<b>Vypočtená kalibrace:</b><br>'
-                f'FOV šířka: <b>{calib["fov_x_mm"]:.2f} mm</b> '
-                f'→ <b>{calib["mm_per_px_x"]:.4f} mm/px</b> (osa X – senzor)<br>'
-                f'{triang_line}<br>'
-                f'Posuv: <b>{calib["mm_per_px_z"]:.4f} mm/snímek</b> (osa Z – pohyb)'
-                f'</div>',
-                unsafe_allow_html=True
-            )
-        else:
-            st.warning("Zadej platné parametry kamery.")
-
-    st.markdown("---")
 
     # ── Rozsah snímků ──────────────────────────────────────────
     with st.expander("Rozsah snímků", expanded=False):
@@ -600,9 +656,31 @@ with st.sidebar:
     colormap = st.selectbox("Barvová mapa", ['magma', 'viridis', 'plasma', 'jet', 'inferno', 'gray'])
     downsample_3d = st.select_slider("Rozlišení 3D vizualizace", options=[1, 2, 4, 8], value=2,
                                      help="Vyšší hodnota = plynulejší 3D model, ale menší detail")
+    z_clip_sigma = st.slider(
+        "Oříznutí outlierů v ose Z (Sigma)", 0.0, 6.0, 3.0, 0.5,
+        help=(
+            "Odstraní bodové výstřelky (špatně detekované pozice laseru) z 3D grafu. "
+            "Body mimo (medián ± N × std) jsou nahrazeny NaN. "
+            "0 = žádné oříznutí."
+        )
+    )
 
     st.markdown("---")
     save_npy = st.checkbox("Uložit depth mapu ke stažení (.npy)", value=True)
+
+    # ── Sestavení kalibrace (musí být po laser_axis) ────────────────────
+    cal_input = dict(
+        focal_length_mm=focal_length_mm,
+        working_distance_mm=working_distance_mm,
+        sensor_width_mm=sensor_width_mm,
+        sensor_height_mm=sensor_height_mm,
+        sensor_res_x=sensor_res_x,
+        sensor_res_y=sensor_res_y,
+        laser_offset_mm=laser_offset_mm,
+        step_mm_per_frame=step_mm_per_frame,
+        laser_axis=laser_axis,               # ← předáváme orientaci laseru
+    )
+    calib = compute_calibration(cal_input)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -695,7 +773,7 @@ if run_btn:
         st.session_state.stats = stats
         st.session_state.last_file = file_name
 
-        fig = create_figure(depth_map, stats, file_name, colormap, use_mm, calib)
+        fig = create_figure(depth_map, stats, file_name, colormap, use_mm, calib, laser_ref_px)
         buf = io.BytesIO()
         fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', transparent=True)
         plt.close(fig)
@@ -709,23 +787,29 @@ if run_btn:
 
 # ── Zobrazení výsledků ─────────────────────────────────────────
 if st.session_state.depth_map is not None:
-    stats    = st.session_state.stats
+    stats        = st.session_state.stats
     depth_map_px = st.session_state.depth_map
-    fname    = st.session_state.last_file
+    fname        = st.session_state.last_file
 
-    # Přepočet statistik do aktuální jednotky
-    nz_px   = depth_map_px[depth_map_px != 0]
+    # Přepočet statistik do aktuální jednotky (s referenční korekcí)
+    nz_px = depth_map_px[depth_map_px != 0]
     if use_mm and calib["valid"]:
-        scale = calib["depth_per_px"]   # triangulační koeficient px → mm výšky
-        unit  = "mm"
-        s_min  = round(float(nz_px.min())  * scale, 4) if nz_px.size else 0
-        s_max  = round(float(nz_px.max())  * scale, 4) if nz_px.size else 0
-        s_mean = round(float(nz_px.mean()) * scale, 4) if nz_px.size else 0
-        s_std  = round(float(nz_px.std())  * scale, 4) if nz_px.size else 0
+        scale  = calib["depth_per_px"]
+        unit   = "mm"
+        # Odečteme referenci před statistikami (stejná logika jako px_to_mm_map)
+        delta  = nz_px - laser_ref_px
+        s_min  = round(float(delta.min())  * scale, 4) if nz_px.size else 0
+        s_max  = round(float(delta.max())  * scale, 4) if nz_px.size else 0
+        s_mean = round(float(delta.mean()) * scale, 4) if nz_px.size else 0
+        s_std  = round(float(delta.std())  * scale, 4) if nz_px.size else 0
     else:
         unit  = "px"
-        s_min, s_max  = stats["min"],  stats["max"]
-        s_mean, s_std = stats["mean"], stats["std"]
+        # I v px režimu zobrazíme výchylku (odečtená reference)
+        delta = nz_px - laser_ref_px
+        s_min  = round(float(delta.min()),  4) if nz_px.size else 0
+        s_max  = round(float(delta.max()),  4) if nz_px.size else 0
+        s_mean = round(float(delta.mean()), 4) if nz_px.size else 0
+        s_std  = round(float(delta.std()),  4) if nz_px.size else 0
 
     st.markdown("### Statistické hodnoty")
     c1, c2, c3, c4, c5, c6 = st.columns(6)
@@ -739,7 +823,10 @@ if st.session_state.depth_map is not None:
     # Kalibrační přehled
     if use_mm and calib["valid"]:
         triang_note = (
-            f'α = {calib["alpha_deg"]:.2f} ° &nbsp;|&nbsp; {calib["depth_per_px"]:.4f} mm/px výchylky'
+            f'α = {calib["alpha_deg"]:.2f} ° &nbsp;|&nbsp; '
+            f'{calib["depth_per_px"]:.4f} mm/px výchylky &nbsp;|&nbsp; '
+            f'Senzorová osa laseru: {"Y" if calib["laser_axis"] == 0 else "X"} '
+            f'({calib["mm_per_px_sensor_laser"]:.4f} mm/px)'
             if calib["triangulation_valid"]
             else "⚠ Triangulace neaktivní (offset = 0)"
         )
@@ -748,7 +835,8 @@ if st.session_state.depth_map is not None:
             f'Kalibrace aktivní &nbsp;|&nbsp; '
             f'Senzor X: {calib["mm_per_px_x"]:.4f} mm/px &nbsp;|&nbsp; '
             f'Hloubka: {triang_note} &nbsp;|&nbsp; '
-            f'Posuv Z: {calib["mm_per_px_z"]:.4f} mm/snímek'
+            f'Posuv Z: {calib["mm_per_px_z"]:.4f} mm/snímek &nbsp;|&nbsp; '
+            f'Ref. laser: {laser_ref_px:.1f} px'
             f'</div>',
             unsafe_allow_html=True
         )
@@ -756,8 +844,7 @@ if st.session_state.depth_map is not None:
     st.markdown("---")
     st.markdown("### Depth mapa (2D)")
 
-    # Živý překreslení grafu při přepnutí px/mm bez nutnosti re-analýzy
-    fig_live = create_figure(depth_map_px, stats, fname, colormap, use_mm, calib)
+    fig_live = create_figure(depth_map_px, stats, fname, colormap, use_mm, calib, laser_ref_px)
     buf_live = io.BytesIO()
     fig_live.savefig(buf_live, format='png', dpi=150, bbox_inches='tight', transparent=True)
     plt.close(fig_live)
@@ -767,7 +854,8 @@ if st.session_state.depth_map is not None:
     st.markdown("---")
     st.markdown("### 3D Vizualizace")
     with st.spinner("Generuji 3D graf..."):
-        fig3d = create_3d_figure(depth_map_px, colormap, downsample_3d, use_mm, calib)
+        fig3d = create_3d_figure(depth_map_px, colormap, downsample_3d, use_mm, calib, laser_ref_px,
+                                 z_clip_sigma=z_clip_sigma)
     st.plotly_chart(fig3d, use_container_width=True)
     st.markdown(
         '<div class="info-box">Click & drag = rotace &nbsp;|&nbsp; '
@@ -789,7 +877,7 @@ if st.session_state.depth_map is not None:
     with dl_col2:
         if save_npy and st.session_state.npy_bytes:
             st.download_button(
-                label="Stáhnout depth mapu (.npy) – vždy v px",
+                label="Stáhnout depth mapu (.npy) – vždy v px (absolutní pozice)",
                 data=st.session_state.npy_bytes,
                 file_name=f"sken_{fname}_depth_map.npy",
                 mime="application/octet-stream",
