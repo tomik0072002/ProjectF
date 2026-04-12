@@ -10,20 +10,16 @@ import os
 # Načtení obrázku loga
 script_dir = os.path.dirname(os.path.abspath(__file__))
 logo_path = os.path.join(script_dir, "vut_brno_00.jpg")
-try:
-    logo = Image.open(logo_path)
-except FileNotFoundError:
-    logo = None  # Ošetření pro případ, že logo není ve složce
+logo = Image.open(logo_path)
 
-# ─── Page config ─────────────────────────────────────────────────────────────
+# ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="VizioMeter - Měření tvarů",
-    page_icon=logo if logo else "📏",
+    page_title="Zpracování obrazu - Optický tok",
+    page_icon=logo,
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# ─── Vzhled stránky ──────────────────────────────────────────────────────────
 st.markdown("""
 <style>
 .info-box {
@@ -38,14 +34,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# ─── Utility ──────────────────────────────────────────────────────────────────
-
 def cv_to_pil(bgr):
     return Image.fromarray(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
 
 
 # ─── Calibration ─────────────────────────────────────────────────────────────
-
 @st.cache_data(show_spinner=False)
 def calibrate(img_bytes, rows, cols, square_mm):
     arr = np.frombuffer(img_bytes, np.uint8)
@@ -114,11 +107,16 @@ def calibrate(img_bytes, rows, cols, square_mm):
 
 # ─── Geometry ────────────────────────────────────────────────────────────────
 
-def get_edges(cnt):
+def get_edges(cnt, angle_merge_tol=6.0):
+    """
+    Improved edge detection with better merging of collinear segments.
+    Returns a list of edge dicts with p1, p2, angle, length, mid.
+    """
     peri = cv2.arcLength(cnt, True)
     area = cv2.contourArea(cnt)
     raw_circ = (4 * math.pi * area) / (peri ** 2) if peri > 0 else 0
 
+    # For non-circular shapes, use coarser approximation first
     if raw_circ >= 0.75:
         epsilon = 0.005 * peri
         approx = cv2.approxPolyDP(cnt, epsilon, True)
@@ -127,9 +125,10 @@ def get_edges(cnt):
                 break
             approx = cv2.approxPolyDP(cnt, factor * peri, True)
     else:
+        # Try progressively coarser approximations and pick stable one
         best = None
         prev_n = None
-        for factor in [0.005, 0.01, 0.015, 0.02, 0.025, 0.03, 0.04]:
+        for factor in [0.01, 0.02, 0.03, 0.04, 0.05, 0.06]:
             cand = cv2.approxPolyDP(cnt, factor * peri, True)
             n_cand = len(cand)
             if prev_n is not None and abs(n_cand - prev_n) <= 1 and n_cand >= 3:
@@ -142,6 +141,7 @@ def get_edges(cnt):
     pts = approx.reshape(-1, 2).astype(np.float32)
     n = len(pts)
 
+    # Build raw edges
     raw_edges = []
     for i in range(n):
         p1 = pts[i]
@@ -152,41 +152,77 @@ def get_edges(cnt):
         mid = ((p1 + p2) / 2).astype(int)
         raw_edges.append({"p1": p1, "p2": p2, "angle": angle, "length": length, "mid": mid})
 
+    # Merge collinear consecutive edges (for polygons)
     if raw_circ < 0.75 and len(raw_edges) >= 3:
-        merged = []
-        used = [False] * len(raw_edges)
+        merged = _merge_collinear_edges(raw_edges, angle_merge_tol)
+        if len(merged) >= 3:
+            raw_edges = merged
+
+    return raw_edges
+
+
+def _merge_collinear_edges(raw_edges, tol_deg=6.0):
+    """
+    Repeatedly merge consecutive edges whose angles differ by less than tol_deg.
+    Iterates until no more merges can be done (handles wrap-around).
+    """
+    edges = list(raw_edges)
+    changed = True
+    max_iter = len(edges)
+    itr = 0
+    while changed and itr < max_iter:
+        changed = False
+        itr += 1
+        new_edges = []
+        used = [False] * len(edges)
         i = 0
-        while i < len(raw_edges):
+        while i < len(edges):
             if used[i]:
                 i += 1
                 continue
-            e = raw_edges[i]
-            j = (i + 1) % len(raw_edges)
+            e = dict(edges[i])
+            j = (i + 1) % len(edges)
             while j != i and not used[j]:
-                diff = abs(raw_edges[j]["angle"] - e["angle"])
+                diff = abs(edges[j]["angle"] - e["angle"])
                 diff = min(diff, 180.0 - diff)
-                if diff < 4.0:
-                    e = {
-                        "p1": e["p1"],
-                        "p2": raw_edges[j]["p2"],
-                        "angle": e["angle"],
-                        "length": 0.0,
-                        "mid": None,
-                    }
+                if diff < tol_deg:
+                    # Merge: extend e to end of edges[j]
+                    e["p2"] = edges[j]["p2"]
                     used[j] = True
-                    j = (j + 1) % len(raw_edges)
+                    changed = True
+                    j = (j + 1) % len(edges)
+                    # Recompute angle and length
+                    vec = e["p2"] - e["p1"]
+                    e["length"] = float(np.linalg.norm(vec))
+                    e["angle"] = math.degrees(math.atan2(float(vec[1]), float(vec[0]))) % 180.0
+                    e["mid"] = ((e["p1"] + e["p2"]) / 2).astype(int)
                 else:
                     break
+            # Finalize edge
             vec = e["p2"] - e["p1"]
             e["length"] = float(np.linalg.norm(vec))
-            e["mid"] = ((e["p1"] + e["p2"]) / 2).astype(int)
             e["angle"] = math.degrees(math.atan2(float(vec[1]), float(vec[0]))) % 180.0
-            merged.append(e)
+            e["mid"] = ((e["p1"] + e["p2"]) / 2).astype(int)
+            new_edges.append(e)
             used[i] = True
             i += 1
-        raw_edges = merged if len(merged) >= 3 else raw_edges
+        edges = new_edges
 
-    return raw_edges
+    # Handle wrap-around: check if first and last can be merged
+    if len(edges) >= 2:
+        first, last = edges[0], edges[-1]
+        diff = abs(first["angle"] - last["angle"])
+        diff = min(diff, 180.0 - diff)
+        if diff < tol_deg:
+            merged = dict(last)
+            merged["p2"] = first["p2"]
+            vec = merged["p2"] - merged["p1"]
+            merged["length"] = float(np.linalg.norm(vec))
+            merged["angle"] = math.degrees(math.atan2(float(vec[1]), float(vec[0]))) % 180.0
+            merged["mid"] = ((merged["p1"] + merged["p2"]) / 2).astype(int)
+            edges = [merged] + edges[1:-1]
+
+    return edges
 
 
 def parallelism_deg(edges, ia, ib):
@@ -269,12 +305,11 @@ def draw_circle_overlay(base_img, cm, px_per_mm):
     r_max_px = int(cm["r_max_mm"] * px_per_mm)
     r_min_px = int(cm["r_min_mm"] * px_per_mm)
 
-    # Akademické barvy BGR pro kružnice
-    c_fit = (178, 114, 0)  # Tmavě modrá
-    c_max = (0, 94, 213)  # Oranžová
-    c_min = (0, 158, 115)  # Zelená
+    c_fit = (178, 114, 0)
+    c_max = (0, 94, 213)
+    c_min = (0, 158, 115)
 
-    for a in range(0, 360, 4):  # Přerušovaná čára pro fitovaný kruh
+    for a in range(0, 360, 4):
         s, e = math.radians(a), math.radians(a + 2)
         cv2.line(out,
                  (cx + int(r_fit_px * math.cos(s)), cy + int(r_fit_px * math.sin(s))),
@@ -288,10 +323,9 @@ def draw_circle_overlay(base_img, cm, px_per_mm):
 
 
 # ─── Detection ───────────────────────────────────────────────────────────────
-
 @st.cache_data(show_spinner=False)
 def detect_objects(img_bytes, _cam_mtx, _dist, canny_low, canny_high,
-                   min_area, max_obj, merge, merge_dist):
+                   min_area, max_obj, merge, merge_dist, detect_holes):
     arr = np.frombuffer(img_bytes, np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
 
@@ -314,29 +348,29 @@ def detect_objects(img_bytes, _cam_mtx, _dist, canny_low, canny_high,
         closed = cv2.dilate(closed, kernel, iterations=2)
         closed = cv2.erode(closed, kernel, iterations=2)
 
-    # Přepnuto na RETR_TREE pro získání hierarchie (vnitřní vs vnější kontury)
-    contours, hierarchy = cv2.findContours(closed.copy(), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    # ZDE JE ZMĚNA: Přepínání RETR_TREE a RETR_EXTERNAL podle toho, zda hledáme díry
+    retrieval_mode = cv2.RETR_TREE if detect_holes else cv2.RETR_EXTERNAL
+    contours, hierarchy = cv2.findContours(closed.copy(), retrieval_mode, cv2.CHAIN_APPROX_SIMPLE)
 
     parts_serialized = []
 
     if hierarchy is not None:
-        hierarchy = hierarchy[0]  # Extrakce samotného pole hierarchie
+        hierarchy = hierarchy[0]
 
         raw_parts = []
         for i, cnt in enumerate(contours):
-            # hierarchy[i][3] == -1 znamená, že kontura nemá rodiče (je to vnější obrys)
+            # U RETR_EXTERNAL bude hierarchy[i][3] vždy -1, u RETR_TREE to značí kořenovou konturu
             if hierarchy[i][3] == -1:
                 if cv2.contourArea(cnt) >= min_area:
                     holes = []
-                    child_idx = hierarchy[i][2]  # Index prvního potomka (díry)
-
-                    # Projdeme všechny sourozence tohoto potomka (všechny díry v tomto objektu)
-                    while child_idx != -1:
-                        hole_cnt = contours[child_idx]
-                        # Odfiltrujeme mikroskopický šum uvnitř dílu (např. prach)
-                        if cv2.contourArea(hole_cnt) >= 20:
-                            holes.append(hole_cnt)
-                        child_idx = hierarchy[child_idx][0]  # Další díra
+                    # Hledáme díry pouze pokud je aktivní detekce děr
+                    if detect_holes:
+                        child_idx = hierarchy[i][2]
+                        while child_idx != -1:
+                            hole_cnt = contours[child_idx]
+                            if cv2.contourArea(hole_cnt) >= 20:
+                                holes.append(hole_cnt)
+                            child_idx = hierarchy[child_idx][0]
 
                     raw_parts.append({
                         "outer": cnt,
@@ -344,12 +378,10 @@ def detect_objects(img_bytes, _cam_mtx, _dist, canny_low, canny_high,
                         "area": cv2.contourArea(cnt)
                     })
 
-        # Seřazení podle plochy a omezení počtu objektů
         raw_parts = sorted(raw_parts, key=lambda x: x["area"], reverse=True)
         if max_obj > 0:
             raw_parts = raw_parts[:max_obj]
 
-        # Serializace pro st.cache_data
         for part in raw_parts:
             holes_s = [(h.tobytes(), h.shape) for h in part["holes"]]
             parts_serialized.append({
@@ -374,17 +406,20 @@ def deserialize_parts(parts_s):
 
 def draw_edge_map(base_img, edges, highlights, raw_cnt=None):
     out = base_img.copy()
-    if raw_cnt is not None:
-        cv2.drawContours(out, [raw_cnt], 0, (180, 180, 180), 1, cv2.LINE_AA)  # Jemná šedá pro raw konturu
 
-    # Vykreslení neaktivních hran (jemná čárkovaná čára)
+    # Draw raw contour as very subtle gray — NOT red, not dominant
+    if raw_cnt is not None:
+        cv2.drawContours(out, [raw_cnt], 0, (160, 160, 160), 1, cv2.LINE_AA)
+
+    # Draw non-highlighted edges (dashed, subtle)
     for i, e in enumerate(edges):
         if i in highlights:
             continue
         p1 = tuple(e["p1"].astype(int))
         p2 = tuple(e["p2"].astype(int))
         dist = int(np.linalg.norm(np.array(p2) - np.array(p1)))
-        if dist == 0: continue
+        if dist == 0:
+            continue
 
         dash_len, gap_len = 8, 8
         dx = (p2[0] - p1[0]) / dist
@@ -400,26 +435,24 @@ def draw_edge_map(base_img, edges, highlights, raw_cnt=None):
             pos = seg_end
             drawing = not drawing
 
-    # Vykreslení vybraných (highlighted) hran čistou plnou čarou
+    # Draw highlighted edges with solid colored lines
     for i, e in enumerate(edges):
         if i not in highlights:
             continue
         p1 = tuple(e["p1"].astype(int))
         p2 = tuple(e["p2"].astype(int))
         color_bgr = highlights[i]
-
-        # Čistá linie bez glow efektu
         cv2.line(out, p1, p2, color_bgr, 3, cv2.LINE_AA)
 
-    # Vykreslení štítků (čísel hran) v čistých bílých kruzích s barevným okrajem
+    # Draw edge number badges
     for i, e in enumerate(edges):
         mid = tuple(e["mid"].astype(int))
         is_hi = i in highlights
         badge_color = highlights[i] if is_hi else (120, 120, 120)
         badge_r = 14 if is_hi else 12
 
-        cv2.circle(out, mid, badge_r, (255, 255, 255), -1)  # Bílé pozadí
-        cv2.circle(out, mid, badge_r, badge_color, 2 if is_hi else 1, cv2.LINE_AA)  # Barevný okraj
+        cv2.circle(out, mid, badge_r, (255, 255, 255), -1)
+        cv2.circle(out, mid, badge_r, badge_color, 2 if is_hi else 1, cv2.LINE_AA)
 
         label = str(i + 1)
         fs = 0.5 if is_hi else 0.4
@@ -460,8 +493,8 @@ def draw_legend_pil(cv_img, legend_defs):
     ov_draw.rounded_rectangle(
         [x0, y0, x0 + panel_w, y0 + panel_h],
         radius=8,
-        fill=(255, 255, 255, 230),  # Akademické světlé pozadí
-        outline=(100, 100, 100, 255),  # Šedý okraj
+        fill=(255, 255, 255, 230),
+        outline=(100, 100, 100, 255),
         width=1,
     )
     pil = pil.convert("RGBA")
@@ -473,15 +506,12 @@ def draw_legend_pil(cv_img, legend_defs):
         ty = y0 + pad + idx * line_h
         sx = x0 + pad
         draw.rectangle([sx, ty + 2, sx + swatch, ty + 2 + swatch - 4], fill=rgb)
-        draw.text((sx + swatch + gap, ty), txt, font=font, fill=(0, 0, 0))  # Černý text
+        draw.text((sx + swatch + gap, ty), txt, font=font, fill=(0, 0, 0))
 
     return cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
 
 
 def tol_row(label, measured, lo, hi, unit, extra="", skip=False):
-    """
-    Vrátí zformátovaný Markdown string pro UI a slovník pro export dat.
-    """
     if skip:
         md = f"**{label}** — přeskočeno"
         data = {
@@ -508,12 +538,10 @@ def tol_row(label, measured, lo, hi, unit, extra="", skip=False):
         "Jednotka": unit,
         "Výsledek": "OK" if ok else "NOK"
     }
-
     return md, data
 
 
 # ─── UI ───────────────────────────────────────────────────────────────────────
-
 st.title("VizioMeter")
 st.markdown("Interaktivní analýza geometrických tolerancí")
 st.markdown("---")
@@ -547,6 +575,16 @@ with st.sidebar:
         max_obj = st.slider("Max. objektů (0=vše)", 0, 20, 1)
         merge = st.toggle("Slučovat kontury", value=True)
         merge_dist = st.slider("Vzdálenost slučování [px]", 5, 100, 40, disabled=not merge)
+        # ZDE JE PŘIDANÝ PŘEPÍNAČ PRO DÍRY
+        detect_holes = st.toggle("Detekovat vnitřní díry (otvory)", value=False,
+                                 help="Vypněte, pokud algoritmus chybně detekuje stíny hran jako vnitřní díry.")
+
+    with st.expander("Detekce hran", expanded=False):
+        st.caption("Parametry rozpoznání hran polygonu")
+        angle_merge_tol = st.slider(
+            "Tolerance úhlu pro slučování hran [°]", 1, 20, 6,
+            help="Hrany jejichž úhel se liší méně než tato hodnota budou sloučeny."
+        )
 
 # ─── Calibration ──────────────────────────────────────────────────────────────
 cam_mtx, dist_c, px_per_mm = None, None, None
@@ -589,10 +627,11 @@ img_bytes = obj_file.read()
 orig_pil = Image.open(io.BytesIO(img_bytes))
 
 # ─── Detect ───────────────────────────────────────────────────────────────────
-with st.spinner("Detekuji objekty a díry..."):
+with st.spinner("Detekuji objekty..."):
+    # ZDE JE PŘIDANÝ PARAMETR detect_holes DO VOLÁNÍ FUNKCE
     img_out_bytes, edge_vis_bytes, parts_s = detect_objects(
         img_bytes, cam_mtx, dist_c,
-        canny_low, canny_high, min_area, max_obj, merge, merge_dist)
+        canny_low, canny_high, min_area, max_obj, merge, merge_dist, detect_holes)
 
 base_arr = np.frombuffer(img_out_bytes, np.uint8)
 edge_arr = np.frombuffer(edge_vis_bytes, np.uint8)
@@ -619,14 +658,13 @@ st.markdown(f"**Nalezeno:** {len(parts)} hlavních objektů")
 # Akademické barvy (BGR formát)
 HCOLORS = {
     "par_a": (0, 158, 230),  # Modrá
-    "par_b": (0, 94, 213),  # Oranžová
+    "par_b": (0, 94, 213),  # Tmavě modrá
     "perp_a": (0, 158, 115),  # Zelená
     "perp_b": (167, 121, 204),  # Fialová
     "len_e": (0, 114, 178),  # Tmavě modrá
 }
 
 # ─── Per-object tabs ──────────────────────────────────────────────────────────
-
 for obj_i, part in enumerate(parts):
     cnt = part["outer"]
     holes = part["holes"]
@@ -642,7 +680,7 @@ for obj_i, part in enumerate(parts):
     peri_mm = cv2.arcLength(cnt, True) / px_per_mm
     circ = circularity_pct(cnt)
     shape = classify_shape(cnt)
-    edges = get_edges(cnt)
+    edges = get_edges(cnt, angle_merge_tol=angle_merge_tol)
     n_edges = len(edges)
 
     shape_labels = {"circle": "Kruh", "ellipse": "Elipsa / Ovál", "polygon": "Mnohoúhelník / Hranaté"}
@@ -651,7 +689,6 @@ for obj_i, part in enumerate(parts):
             f"Objekt #{obj_i + 1}  —  {rw_mm:.1f} × {rh_mm:.1f} mm  |  kruhovitost {circ:.0f}%  |  detekce: {shape_labels[shape]}",
             expanded=True,
     ):
-
         st.markdown("**Rozměry**")
         d1, d2, d3, d4, d5, d6 = st.columns(6)
         d1.metric("Šířka", f"{rw_mm:.2f} mm")
@@ -705,12 +742,9 @@ for obj_i, part in enumerate(parts):
             st.markdown("`—— Fitovaný kruh` | `— R max` | `— R min`")
             circ_vis = draw_circle_overlay(base_img, cm, px_per_mm)
             cv2.drawContours(circ_vis, [cnt], 0, (180, 180, 180), 1, cv2.LINE_AA)
-
-            # Vykreslení případných vnitřních děr do vizualizace
             if holes:
                 cv2.drawContours(circ_vis, holes, -1, (0, 0, 255), 2, cv2.LINE_AA)
 
-            # --- Zobrazení do středního sloupce ---
             c_v1, c_v2, c_v3 = st.columns([1, 2, 1])
             with c_v2:
                 st.image(cv_to_pil(circ_vis), use_container_width=True)
@@ -735,7 +769,6 @@ for obj_i, part in enumerate(parts):
                     st.markdown("| Úhel | R [mm] | Odchylka | Δ [mm] |\n|---|---|---|---|\n" + "\n".join(rows_p))
 
             st.markdown("---")
-
             st.markdown("**Tolerance kruhu**")
             cfg = {}
             tc1, tc2, tc3 = st.columns(3)
@@ -772,7 +805,6 @@ for obj_i, part in enumerate(parts):
                                                  disabled=not cfg["rad_en"])
 
             st.markdown("---")
-
             st.markdown("**Výsledky**")
             rows_html, pass_list, export_data = [], [], []
 
@@ -821,7 +853,6 @@ for obj_i, part in enumerate(parts):
 
             img_buf = io.BytesIO()
             cv_to_pil(circ_vis).save(img_buf, format="PNG")
-
             df_export = pd.DataFrame(export_data)
             csv_data = df_export.to_csv(index=False).encode('utf-8-sig')
 
@@ -837,31 +868,29 @@ for obj_i, part in enumerate(parts):
                                    file_name=f"viziometer_obj{obj_i + 1}_data.csv",
                                    mime="text/csv", key=f"csv_dl_{obj_i}", use_container_width=True)
 
-        else:  # mode_choice == 'polygon'
-            # Vědecká Okabe-Ito paleta (colorblind-friendly), formát BGR
+        else:  # polygon mode
             PALETTE = [
-                (0, 158, 230),  # Modrá
-                (0, 114, 178),  # Tmavě modrá
-                (0, 158, 115),  # Zelená
-                (10, 194, 213),  # Světle modrá
-                (0, 94, 213),  # Oranžová
-                (167, 121, 204),  # Fialová
-                (0, 0, 0)  # Černá
+                (0, 158, 230),
+                (0, 114, 178),
+                (0, 158, 115),
+                (10, 194, 213),
+                (0, 94, 213),
+                (167, 121, 204),
+                (0, 0, 0)
             ]
 
             export_data = []
 
             st.markdown("**Mapa hran**")
             st.markdown(
-                f'<div class="info-box">Detekováno {n_edges} hran. Čísla hran jsou označena v náhledu. Nastavte konfiguraci níže.</div>',
+                f'<div class="info-box">Detekováno {n_edges} hran. Čísla hran jsou označena v náhledu. '
+                f'Pokud je hran příliš mnoho nebo málo, upravte "Toleranci úhlu pro slučování hran" v postranním panelu (Detekce hran).</div>',
                 unsafe_allow_html=True
             )
 
             preview_highlights = {i: PALETTE[i % len(PALETTE)] for i in range(n_edges)}
             edge_preview = draw_edge_map(base_img, edges, preview_highlights, raw_cnt=cnt)
             cv2.rectangle(edge_preview, (x, y), (x + bw, y + bh), (150, 150, 150), 1)
-
-            # Vykreslení případných vnitřních děr do vizualizace
             if holes:
                 cv2.drawContours(edge_preview, holes, -1, (0, 0, 255), 2, cv2.LINE_AA)
 
@@ -872,23 +901,19 @@ for obj_i, part in enumerate(parts):
             ]
             edge_preview = draw_legend_pil(edge_preview, preview_legend)
 
-            # --- Zobrazení do středního sloupce ---
             c_p1, c_p2, c_p3 = st.columns([1, 2, 1])
             with c_p2:
                 st.image(cv_to_pil(edge_preview), use_container_width=True)
 
             st.markdown("**Seznam všech hran**")
             edges_df_data = []
-
             for i, e in enumerate(edges):
                 length_mm = e['length'] / px_per_mm
-
                 edges_df_data.append({
                     "Hrana": f"H{i + 1}",
                     "Délka [mm]": round(length_mm, 3),
                     "Úhel [°]": round(e['angle'], 1)
                 })
-
                 export_data.append({
                     "Veličina": f"Délka hrany H{i + 1}",
                     "Naměřeno": round(length_mm, 3),
@@ -899,10 +924,9 @@ for obj_i, part in enumerate(parts):
                 })
 
             st.dataframe(pd.DataFrame(edges_df_data), use_container_width=True)
-
             st.markdown("---")
-
             st.markdown("**Konfigurace tolerancí**")
+
             nums = list(range(1, n_edges + 1))
 
 
@@ -983,9 +1007,19 @@ for obj_i, part in enumerate(parts):
                                                       disabled=not cfg["dim_en"])
 
             st.markdown("---")
-
             st.markdown("**Výsledky tolerance**")
-            rows_html, pass_list, highlights = [], [], {}
+            rows_html, pass_list = [], []
+
+            # highlights: each edge index maps to ONE color (last assignment wins — warn user)
+            highlights = {}
+            highlight_conflicts = set()
+
+
+            def assign_highlight(idx, color):
+                if idx in highlights and highlights[idx] != color:
+                    highlight_conflicts.add(idx)
+                highlights[idx] = color
+
 
             if cfg["par_en"]:
                 ia, ib = cfg["par_a"], cfg["par_b"]
@@ -994,8 +1028,8 @@ for obj_i, part in enumerate(parts):
                 pass_list.append(ok)
                 r_md, r_data = tol_row(f"Rovnoběžnost (H{ia + 1} | H{ib + 1})", dev, 0.0, cfg["par_tol"], "°",
                                        extra=f" — odchylka **{dev:.3f}°**")
-                highlights[ia] = HCOLORS["par_a"]
-                highlights[ib] = HCOLORS["par_b"]
+                assign_highlight(ia, HCOLORS["par_a"])
+                assign_highlight(ib, HCOLORS["par_b"])
             else:
                 r_md, r_data = tol_row("Rovnoběžnost", 0, 0, 0, "°", skip=True)
             rows_html.append(r_md)
@@ -1008,8 +1042,8 @@ for obj_i, part in enumerate(parts):
                 pass_list.append(ok)
                 r_md, r_data = tol_row(f"Kolmost (H{ia + 1} | H{ib + 1})", dev, 0.0, cfg["perp_tol"], "°",
                                        extra=f" — odchylka od 90°: **{dev:.3f}°**")
-                highlights[ia] = HCOLORS["perp_a"]
-                highlights[ib] = HCOLORS["perp_b"]
+                assign_highlight(ia, HCOLORS["perp_a"])
+                assign_highlight(ib, HCOLORS["perp_b"])
             else:
                 r_md, r_data = tol_row("Kolmost", 0, 0, 0, "°", skip=True)
             rows_html.append(r_md)
@@ -1025,10 +1059,11 @@ for obj_i, part in enumerate(parts):
                     pass_list.append(ok)
                     r_md, r_data = tol_row(f"Tolerance délky H{ie + 1}", elen, lo, hi, "mm",
                                            extra=f" — jmenovitá **{cfg['len_nom']:.1f} mm**")
-                    highlights[ie] = HCOLORS["len_e"]
+                    assign_highlight(ie, HCOLORS["len_e"])
                 else:
                     r_md = "[NOK] Délka: hrana neexistuje"
-                    r_data = {"Veličina": "Tolerance délky hrany", "Naměřeno": None, "Minimum": None, "Maximum": None,
+                    r_data = {"Veličina": "Tolerance délky hrany", "Naměřeno": None,
+                              "Minimum": None, "Maximum": None,
                               "Jednotka": "mm", "Výsledek": "Chyba (hrana chybí)"}
             else:
                 r_md, r_data = tol_row("Tolerance délky hrany", 0, 0, 0, "mm", skip=True)
@@ -1062,6 +1097,14 @@ for obj_i, part in enumerate(parts):
             for r in rows_html:
                 st.markdown(r)
 
+            # Warn about highlight conflicts
+            if highlight_conflicts:
+                st.warning(
+                    f"⚠️ Hrany {', '.join('H' + str(i + 1) for i in sorted(highlight_conflicts))} jsou přiřazeny "
+                    f"více měřením najednou. V legendě bude zobrazena poslední barva. "
+                    f"Pro přehlednou vizualizaci vyberte různé hrany pro rovnoběžnost a kolmost."
+                )
+
             if pass_list:
                 n_ok = sum(pass_list)
                 if n_ok == len(pass_list):
@@ -1071,8 +1114,6 @@ for obj_i, part in enumerate(parts):
 
             st.markdown("**Vizualizace vybraných hran**")
             annotated = draw_edge_map(base_img, edges, highlights, raw_cnt=cnt)
-
-            # Vykreslení případných vnitřních děr do anotovaného obrázku pro export
             if holes:
                 cv2.drawContours(annotated, holes, -1, (0, 0, 255), 2, cv2.LINE_AA)
 
@@ -1101,14 +1142,12 @@ for obj_i, part in enumerate(parts):
                 )
             annotated = draw_legend_pil(annotated, legend_defs)
 
-            # --- Zobrazení do středního sloupce ---
             c_a1, c_a2, c_a3 = st.columns([1, 2, 1])
             with c_a2:
                 st.image(cv_to_pil(annotated), use_container_width=True)
 
             img_buf = io.BytesIO()
             cv_to_pil(annotated).save(img_buf, format="PNG")
-
             df_export = pd.DataFrame(export_data)
             csv_data = df_export.to_csv(index=False).encode('utf-8-sig')
 
