@@ -10,13 +10,15 @@ import os
 # Načtení obrázku loga
 script_dir = os.path.dirname(os.path.abspath(__file__))
 logo_path = os.path.join(script_dir, "vut_brno_00.jpg")
-logo = Image.open(logo_path)
-
+try:
+    logo = Image.open(logo_path)
+except FileNotFoundError:
+    logo = None  # Ošetření pro případ, že logo není ve složce
 
 # ─── Page config ─────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="VizioMeter - Měření tvarů",
-    page_icon=logo,
+    page_icon=logo if logo else "📏",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -312,21 +314,62 @@ def detect_objects(img_bytes, _cam_mtx, _dist, canny_low, canny_high,
         closed = cv2.dilate(closed, kernel, iterations=2)
         closed = cv2.erode(closed, kernel, iterations=2)
 
-    contours, _ = cv2.findContours(closed.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    contours = [c for c in contours if cv2.contourArea(c) >= min_area]
-    contours = sorted(contours, key=cv2.contourArea, reverse=True)
-    if max_obj > 0:
-        contours = contours[:max_obj]
+    # Přepnuto na RETR_TREE pro získání hierarchie (vnitřní vs vnější kontury)
+    contours, hierarchy = cv2.findContours(closed.copy(), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
-    cnts_serialized = [c.tobytes() for c in contours]
-    shapes = [c.shape for c in contours]
+    parts_serialized = []
+
+    if hierarchy is not None:
+        hierarchy = hierarchy[0]  # Extrakce samotného pole hierarchie
+
+        raw_parts = []
+        for i, cnt in enumerate(contours):
+            # hierarchy[i][3] == -1 znamená, že kontura nemá rodiče (je to vnější obrys)
+            if hierarchy[i][3] == -1:
+                if cv2.contourArea(cnt) >= min_area:
+                    holes = []
+                    child_idx = hierarchy[i][2]  # Index prvního potomka (díry)
+
+                    # Projdeme všechny sourozence tohoto potomka (všechny díry v tomto objektu)
+                    while child_idx != -1:
+                        hole_cnt = contours[child_idx]
+                        # Odfiltrujeme mikroskopický šum uvnitř dílu (např. prach)
+                        if cv2.contourArea(hole_cnt) >= 20:
+                            holes.append(hole_cnt)
+                        child_idx = hierarchy[child_idx][0]  # Další díra
+
+                    raw_parts.append({
+                        "outer": cnt,
+                        "holes": holes,
+                        "area": cv2.contourArea(cnt)
+                    })
+
+        # Seřazení podle plochy a omezení počtu objektů
+        raw_parts = sorted(raw_parts, key=lambda x: x["area"], reverse=True)
+        if max_obj > 0:
+            raw_parts = raw_parts[:max_obj]
+
+        # Serializace pro st.cache_data
+        for part in raw_parts:
+            holes_s = [(h.tobytes(), h.shape) for h in part["holes"]]
+            parts_serialized.append({
+                "outer_bytes": part["outer"].tobytes(),
+                "outer_shape": part["outer"].shape,
+                "holes": holes_s
+            })
+
     edge_vis_bytes = cv2.imencode(".png", cv2.cvtColor(edged, cv2.COLOR_GRAY2BGR))[1].tobytes()
     img_bytes_out = cv2.imencode(".png", img)[1].tobytes()
-    return img_bytes_out, edge_vis_bytes, cnts_serialized, shapes
+    return img_bytes_out, edge_vis_bytes, parts_serialized
 
 
-def deserialize_contours(cnts_s, shapes):
-    return [np.frombuffer(s, dtype=np.int32).reshape(sh) for s, sh in zip(cnts_s, shapes)]
+def deserialize_parts(parts_s):
+    parts = []
+    for p in parts_s:
+        outer = np.frombuffer(p["outer_bytes"], dtype=np.int32).reshape(p["outer_shape"])
+        holes = [np.frombuffer(hb, dtype=np.int32).reshape(hs) for hb, hs in p["holes"]]
+        parts.append({"outer": outer, "holes": holes})
+    return parts
 
 
 def draw_edge_map(base_img, edges, highlights, raw_cnt=None):
@@ -546,8 +589,8 @@ img_bytes = obj_file.read()
 orig_pil = Image.open(io.BytesIO(img_bytes))
 
 # ─── Detect ───────────────────────────────────────────────────────────────────
-with st.spinner("Detekuji objekty..."):
-    img_out_bytes, edge_vis_bytes, cnts_s, shapes = detect_objects(
+with st.spinner("Detekuji objekty a díry..."):
+    img_out_bytes, edge_vis_bytes, parts_s = detect_objects(
         img_bytes, cam_mtx, dist_c,
         canny_low, canny_high, min_area, max_obj, merge, merge_dist)
 
@@ -555,7 +598,8 @@ base_arr = np.frombuffer(img_out_bytes, np.uint8)
 edge_arr = np.frombuffer(edge_vis_bytes, np.uint8)
 base_img = cv2.imdecode(base_arr, cv2.IMREAD_COLOR)
 edge_img = cv2.imdecode(edge_arr, cv2.IMREAD_COLOR)
-contours = deserialize_contours(cnts_s, shapes)
+
+parts = deserialize_parts(parts_s)
 
 col_a, col_b = st.columns(2)
 with col_a:
@@ -565,12 +609,12 @@ with col_b:
     st.markdown("**Hranový detektor**")
     st.image(cv_to_pil(edge_img), use_container_width=True)
 
-if not contours:
+if not parts:
     st.warning("Žádné objekty nebyly nalezeny. Zkuste upravit prahy Canny nebo min. plochu v postranním panelu.")
     st.stop()
 
 st.markdown("---")
-st.markdown(f"**Nalezeno:** {len(contours)} objektů")
+st.markdown(f"**Nalezeno:** {len(parts)} hlavních objektů")
 
 # Akademické barvy (BGR formát)
 HCOLORS = {
@@ -583,7 +627,11 @@ HCOLORS = {
 
 # ─── Per-object tabs ──────────────────────────────────────────────────────────
 
-for obj_i, cnt in enumerate(contours):
+for obj_i, part in enumerate(parts):
+    cnt = part["outer"]
+    holes = part["holes"]
+    n_holes = len(holes)
+
     area_px = cv2.contourArea(cnt)
     x, y, bw, bh = cv2.boundingRect(cnt)
     rect = cv2.minAreaRect(cnt)
@@ -605,12 +653,13 @@ for obj_i, cnt in enumerate(contours):
     ):
 
         st.markdown("**Rozměry**")
-        d1, d2, d3, d4, d5 = st.columns(5)
+        d1, d2, d3, d4, d5, d6 = st.columns(6)
         d1.metric("Šířka", f"{rw_mm:.2f} mm")
         d2.metric("Výška", f"{rh_mm:.2f} mm")
         d3.metric("Plocha", f"{area_mm2:.1f} mm²")
         d4.metric("Obvod", f"{peri_mm:.1f} mm")
         d5.metric("Kruhovitost (raw)", f"{circ:.1f} %")
+        d6.metric("Počet děr", f"{n_holes}")
 
         st.markdown("**Typ analýzy**")
         sel_cols = st.columns([3, 2])
@@ -656,6 +705,10 @@ for obj_i, cnt in enumerate(contours):
             st.markdown("`—— Fitovaný kruh` | `— R max` | `— R min`")
             circ_vis = draw_circle_overlay(base_img, cm, px_per_mm)
             cv2.drawContours(circ_vis, [cnt], 0, (180, 180, 180), 1, cv2.LINE_AA)
+
+            # Vykreslení případných vnitřních děr do vizualizace
+            if holes:
+                cv2.drawContours(circ_vis, holes, -1, (0, 0, 255), 2, cv2.LINE_AA)
 
             # --- Zobrazení do středního sloupce ---
             c_v1, c_v2, c_v3 = st.columns([1, 2, 1])
@@ -807,6 +860,11 @@ for obj_i, cnt in enumerate(contours):
             preview_highlights = {i: PALETTE[i % len(PALETTE)] for i in range(n_edges)}
             edge_preview = draw_edge_map(base_img, edges, preview_highlights, raw_cnt=cnt)
             cv2.rectangle(edge_preview, (x, y), (x + bw, y + bh), (150, 150, 150), 1)
+
+            # Vykreslení případných vnitřních děr do vizualizace
+            if holes:
+                cv2.drawContours(edge_preview, holes, -1, (0, 0, 255), 2, cv2.LINE_AA)
+
             preview_legend = [
                 (PALETTE[i % len(PALETTE)],
                  f"H{i + 1}  {edges[i]['length'] / px_per_mm:.1f} mm  {edges[i]['angle']:.1f} deg")
@@ -1013,6 +1071,10 @@ for obj_i, cnt in enumerate(contours):
 
             st.markdown("**Vizualizace vybraných hran**")
             annotated = draw_edge_map(base_img, edges, highlights, raw_cnt=cnt)
+
+            # Vykreslení případných vnitřních děr do anotovaného obrázku pro export
+            if holes:
+                cv2.drawContours(annotated, holes, -1, (0, 0, 255), 2, cv2.LINE_AA)
 
             legend_defs = []
             if cfg["par_en"]:
