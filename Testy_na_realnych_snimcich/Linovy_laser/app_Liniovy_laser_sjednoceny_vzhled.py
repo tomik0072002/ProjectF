@@ -128,12 +128,18 @@ def process_laser_scan(snimky_3d, params, progress_bar=None, status_text=None):
         profile_cropped = get_laser_profile(signal, params['threshold'], params['peak_window'], params['laser_axis'])
 
         # Korekce offsetu ořezu + vložení profilu zpět do pole původní velikosti.
-        # laser_axis=0 → profil má délku (h - ct - cb), souřadnice jsou v ose X → offset crop_l
-        # laser_axis=1 → profil má délku (w - cl - cr), souřadnice jsou v ose Y → offset crop_t
+        #
+        # laser_axis=0 → laser je horizontální, pro každý ŘÁDEK (y) hledáme střed v ose X
+        #   - profil má délku (h - ct - cb)  → vkládáme od řádku ct  → offset_pos = ct
+        #   - souřadnice X středů jsou relativní k ořezu zleva         → offset_val = cl
+        #
+        # laser_axis=1 → laser je vertikální, pro každý SLOUPEC (x) hledáme střed v ose Y
+        #   - profil má délku (w - cl - cr)  → vkládáme od sloupce cl → offset_pos = cl
+        #   - souřadnice Y středů jsou relativní k ořezu shora         → offset_val = ct
         if params['laser_axis'] == 0:
             full_len = h
-            offset_pos = ct      # kde v původním snímku začíná oříznutá oblast (řádky)
-            offset_val = cl      # o kolik jsou posunuty X souřadnice středu laseru
+            offset_pos = ct
+            offset_val = cl
         else:
             full_len = w
             offset_pos = cl
@@ -210,7 +216,6 @@ def create_figure(depth_map, stats, file_name, colormap):
     cb.ax.yaxis.set_tick_params(color='gray')
     plt.setp(cb.ax.yaxis.get_ticklabels(), color='gray')
 
-    # ODSTRANĚNO info, ponechán pouze čistý popisek osy
     ax1.set_xlabel("Cislo snimku", fontsize=10, color='gray')
 
     # Panel 2: Prumerny profil (zabere první 3 sloupce = levá polovina plátna)
@@ -297,7 +302,7 @@ with st.sidebar:
 
     with st.expander("Rozsah snímků", expanded=False):
         st.caption(
-            "Omezí zpracování pouze na vybraný rozsah snímků ze souboru. "
+            "Omezí zpracování pouze na vybraný rozsah snímků ze souboru."
         )
         frame_start = st.number_input(
             "Od snímku", min_value=0, value=0, step=1,
@@ -310,19 +315,24 @@ with st.sidebar:
 
     with st.expander("Oříznutí obrazu (ROI)", expanded=False):
         st.caption(
-            "Omezí zpracování pouze na vybranou oblast snímku. "
+            "Odřízne okraje každého snímku před zpracováním. "
+            "Hodnoty jsou v pixelech od příslušného okraje snímku."
         )
+
+        st.markdown("**Osa: Pozice na senzoru** (výška snímku)")
         crop_t = st.number_input(
-            "Zdola v ose: Pozice na senzoru [px]", 0, step=10,
+            "Od dolního okraje [px]", min_value=0, value=0, step=10
         )
         crop_b = st.number_input(
-            "Shora v ose: Pozice na senzoru [px]", 0, step=10,
+            "Od horního okraje [px]", min_value=0, value=0, step=10
         )
+
+        st.markdown("**Osa: Poloha laseru** (šířka snímku)")
         crop_l = st.number_input(
-            "Zdola v ose: Poloha laseru [px]", 0, step=10,
+            "Od levého okraje [px]", min_value=0, value=0, step=10
         )
         crop_r = st.number_input(
-            "Zhora v ose: Poloha lseru [px]", 0, step=10,
+            "Od pravého okraje [px]", min_value=0, value=0, step=10
         )
 
     with st.expander("Korekce a filtry", expanded=False):
@@ -344,7 +354,8 @@ with st.sidebar:
                                   format_func=lambda x: "0 - Horizontálně" if x == 0 else "1 - Vertikálně")
         channel = st.selectbox("Kanál signálu", options=['GRAY', 'RG', 'R', 'G'])
         threshold = st.slider("Práh (Min. jas)", 0, 70, 10, 5)
-        peak_window = st.slider("Prohledávací okno [px]", 1, 50, 10, 1, help="Šířka okolí maxima pro výpočet těžiště")
+        peak_window = st.slider("Prohledávací okno [px]", 1, 50, 10, 1,
+                                help="Šířka okolí maxima pro výpočet těžiště")
 
     with st.expander("Post-processing", expanded=False):
         smooth_kernel = st.slider("Vyhlazení povrchu (Medián)", 1, 15, 1, 2, help="1 = Vypnuto")
@@ -362,13 +373,15 @@ with st.sidebar:
     st.markdown("---")
     save_npy = st.checkbox("Uložit depth mapu ke stažení (.npy)", value=True)
 
+
 #  Hlavni panel
 st.title("Zpracování skenu")
 
 # Vstupní soubor a tlačítko na hlavní stránce
 input_col, btn_col = st.columns([4, 1])
 with input_col:
-    file_path = st.text_input("Cesta k souboru (.npy)", value="./OUT/kamera_251.npy", label_visibility="collapsed",
+    file_path = st.text_input("Cesta k souboru (.npy)", value="./OUT/kamera_251.npy",
+                              label_visibility="collapsed",
                               placeholder="Cesta k souboru (.npy)")
 with btn_col:
     run_btn = st.button("SPUSTIT ANALÝZU", use_container_width=True)
@@ -417,14 +430,66 @@ if run_btn:
         fe = int(frame_end) + 1 if int(frame_end) > 0 else len(snimky)
         fe = min(fe, len(snimky))
         if fs >= fe:
-            st.error(f"Neplatný rozsah snímků: od {fs} do {fe - 1}. 'Od snímku' musí být menší než 'Do snímku'.")
+            st.error(
+                f"Neplatný rozsah snímků: od {fs} do {fe - 1}. "
+                f"'Od snímku' musí být menší než 'Do snímku'."
+            )
             st.stop()
         snimky = snimky[fs:fe]
         if fs > 0 or int(frame_end) > 0:
             st.markdown(
-                f'<div class="info-box">Použit rozsah snímků: {fs} – {fe - 1} &nbsp;|&nbsp; Zpracováno: {len(snimky)} snímků</div>',
+                f'<div class="info-box">'
+                f'Použit rozsah snímků: {fs} – {fe - 1} &nbsp;|&nbsp; '
+                f'Zpracováno: {len(snimky)} snímků'
+                f'</div>',
                 unsafe_allow_html=True
             )
+
+        # ── Validace ROI ──────────────────────────────────────────────────────
+        if len(snimky) > 0:
+            h_img, w_img = snimky[0].shape[:2]
+            roi_errors = []
+
+            if crop_t + crop_b >= h_img:
+                roi_errors.append(
+                    f"Ořez **shora** ({crop_t} px) + **zdola** ({crop_b} px) = "
+                    f"{crop_t + crop_b} px ≥ výška snímku ({h_img} px). "
+                    f"Po ořezu by nezůstal žádný řádek."
+                )
+            if crop_l + crop_r >= w_img:
+                roi_errors.append(
+                    f"Ořez **zleva** ({crop_l} px) + **zprava** ({crop_r} px) = "
+                    f"{crop_l + crop_r} px ≥ šířka snímku ({w_img} px). "
+                    f"Po ořezu by nezůstal žádný sloupec."
+                )
+
+            if roi_errors:
+                for err in roi_errors:
+                    st.error(f"❌ Neplatné ROI: {err}")
+                st.stop()
+
+            roi_h = h_img - crop_t - crop_b
+            roi_w = w_img - crop_l - crop_r
+            min_roi_px = 10
+
+            if roi_h < min_roi_px or roi_w < min_roi_px:
+                st.error(
+                    f"❌ ROI je příliš malé: výsledná oblast by měla pouze "
+                    f"**{roi_w} × {roi_h} px** (minimum je {min_roi_px} × {min_roi_px} px). "
+                    f"Zmenšete hodnoty ořezu."
+                )
+                st.stop()
+
+            st.markdown(
+                f'<div class="info-box">'
+                f'ROI: <strong>{roi_w} × {roi_h} px</strong> &nbsp;|&nbsp; '
+                f'Původní rozlišení snímku: {w_img} × {h_img} px &nbsp;|&nbsp; '
+                f'Ořez — shora: {crop_t} px, zdola: {crop_b} px, '
+                f'zleva: {crop_l} px, zprava: {crop_r} px'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+        # ─────────────────────────────────────────────────────────────────────
 
         params = dict(
             crop_t=crop_t, crop_b=crop_b, crop_l=crop_l, crop_r=crop_r,
@@ -494,7 +559,11 @@ if st.session_state.depth_map is not None:
         fig3d = create_3d_figure(depth_map, colormap, downsample=downsample_3d)
     st.plotly_chart(fig3d, use_container_width=True)
     st.markdown(
-        '<div class="info-box">Click & drag s myší = rotace | Click & Ctrl = translační pohyb | Kolečko myši = zoom</div>',
+        '<div class="info-box">'
+        'Click &amp; drag s myší = rotace &nbsp;|&nbsp; '
+        'Click &amp; Ctrl = translační pohyb &nbsp;|&nbsp; '
+        'Kolečko myši = zoom'
+        '</div>',
         unsafe_allow_html=True
     )
 
