@@ -327,12 +327,12 @@ with st.sidebar:
             "Od horního okraje [px]", min_value=0, value=0, step=10
         )
 
-        st.markdown("**Osa: Poloha laseru** (šířka snímku)")
+        st.markdown("**Osa: Hloubka")
         crop_l = st.number_input(
-            "Od levého okraje [px]", min_value=0, value=0, step=10
+            "Od dolního okraje [px]", min_value=0, value=0, step=10
         )
         crop_r = st.number_input(
-            "Od pravého okraje [px]", min_value=0, value=0, step=10
+            "Od horního okraje [px]", min_value=0, value=0, step=10
         )
 
     with st.expander("Korekce a filtry", expanded=False):
