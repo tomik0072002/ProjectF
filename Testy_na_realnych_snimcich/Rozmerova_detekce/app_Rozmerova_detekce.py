@@ -845,7 +845,7 @@ if not px_per_mm:
     px_per_mm = 5.0
     if not calib_file:
         st.markdown(
-            '<div class="info-box">Nahrajte šachovnici nebo zadejte vlastní px/mm. Aktuální výchozí: 5.0 px/mm</div>',
+            '<div class="info-box">Nahrajte šachovnici nebo zadejte vlastní px/mm. Výchozí: 5.0 px/mm</div>',
             unsafe_allow_html=True
         )
 
@@ -1267,7 +1267,7 @@ for obj_i, part in enumerate(parts):
                 st.markdown("**Rozměr objektu hlavního tvaru (šířka / výška)**")
                 dc = st.columns([1, 1, 1, 1, 1, 1])
                 cfg["dim_en"] = dc[0].checkbox("Aktivní", value=True, key=f"dim_en_{obj_i}")
-                cfg["dim_axis"] = dc[1].selectbox("Osa", ["Šířka", "Výška", "Obě"],
+                cfg["dim_axis"] = dc[1].selectbox("Osa", ["Šířka", "Výška", "Obě"], index=2,
                                                   key=f"dim_axis_{obj_i}",
                                                   disabled=not cfg["dim_en"])
                 cfg["dim_wnom"] = dc[2].number_input("Jmenovitá šířka [mm]", 0.0, 2000.0,
@@ -1360,9 +1360,9 @@ for obj_i, part in enumerate(parts):
             st.markdown("---")
             st.markdown("**Výsledky tolerance celého objektu**")
             if is_nok:
-                st.error(f"MIMO TOLERANCI | Alespoň jedna kontrola hlavního tvaru nebo děr selhala.")
+                st.error(f"MIMO TOLERANCI | Alespoň jedna z kontrol tvaru není v toleranci.")
             else:
-                st.success(f"V TOLERANCI | Všechny provedené kontroly hlavního tvaru a děr prošly.")
+                st.success(f"V TOLERANCI | Všechny nastavené kontroly tvaru jsou v toleranci.")
 
             df_export = pd.DataFrame(export_data_list)
             csv_data = df_export.to_csv(index=False).encode('utf-8-sig')
