@@ -204,11 +204,9 @@ def make_histogram_fig(df: pd.DataFrame, unit: str) -> plt.Figure:
     col = f"Ekv. průměr ({unit})"
     fig, axes = plt.subplots(1, 2, figsize=(11, 4))
 
-    # Průhledné pozadí grafu pro přizpůsobení se Streamlit tématu
     fig.patch.set_alpha(0.0)
     for ax in axes:
         ax.set_facecolor("none")
-        # Neutrální barva textu os, aby byla vidět na světlém i tmavém pozadí
         ax.tick_params(colors="gray")
         ax.xaxis.label.set_color("gray")
         ax.yaxis.label.set_color("gray")
@@ -218,7 +216,6 @@ def make_histogram_fig(df: pd.DataFrame, unit: str) -> plt.Figure:
 
     if col in df.columns and len(df) > 0:
         data = df[col]
-        # Barvy sloupců přizpůsobené pro dobrou viditelnost
         axes[0].hist(data, bins=min(25, len(df)), color="#4fc3f7", edgecolor="gray", linewidth=0.4, alpha=0.8)
         axes[0].axvline(data.mean(), color="#ff7043", lw=1.5, ls="--", label=f"Průměr {data.mean():.3f}")
         axes[0].axvline(data.median(), color="#66bb6a", lw=1.5, ls=":", label=f"Medián {data.median():.3f}")
@@ -438,7 +435,6 @@ if show_table:
         num_cols = [c for c in df.columns if c != "ID"]
         styled = df.style.format({c: "{:.4f}" for c in num_cols})
         if highlight_max:
-            # Neutrální průhledná barva pro zvýraznění max hodnot, ať ladí se vším
             styled = styled.highlight_max(subset=num_cols, color="rgba(249, 115, 22, 0.3)")
         st.dataframe(styled, use_container_width=True, height=420)
     else:
