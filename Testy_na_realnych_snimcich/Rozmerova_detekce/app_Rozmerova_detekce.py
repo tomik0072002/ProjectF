@@ -111,7 +111,6 @@ def calibrate(img_bytes, rows, cols, square_mm):
 # ─── Geometry ────────────────────────────────────────────────────────────────
 
 def draw_holes_with_labels(out, holes):
-    """Vykreslí obrysy děr a označí je štítky (#1, #2...)."""
     cv2.drawContours(out, holes, -1, (0, 0, 255), 2, cv2.LINE_AA)
     for i, h_cnt in enumerate(holes):
         M = cv2.moments(h_cnt)
@@ -365,12 +364,12 @@ def detect_objects(img_bytes, _cam_mtx, _dist, canny_low, canny_high,
             processed = cv2.morphologyEx(processed, cv2.MORPH_CLOSE, kernel)
     else:
         processed = cv2.Canny(blurred, canny_low, canny_high)
-        k = max(5, merge_dist) if merge else 5
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (k, k))
-        processed = cv2.morphologyEx(processed, cv2.MORPH_CLOSE, kernel)
         if merge:
-            processed = cv2.dilate(processed, kernel, iterations=2)
-            processed = cv2.erode(processed, kernel, iterations=2)
+            k = max(5, merge_dist)
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (k, k))
+            processed = cv2.morphologyEx(processed, cv2.MORPH_CLOSE, kernel)
+            processed = cv2.dilate(processed, kernel, iterations=1)
+            processed = cv2.erode(processed, kernel, iterations=1)
 
     retrieval_mode = cv2.RETR_TREE if detect_holes else cv2.RETR_EXTERNAL
     contours, hierarchy = cv2.findContours(processed.copy(), retrieval_mode, cv2.CHAIN_APPROX_SIMPLE)
@@ -427,7 +426,14 @@ def detect_objects(img_bytes, _cam_mtx, _dist, canny_low, canny_high,
                 "holes": holes_s
             })
 
-    edge_vis_bytes = cv2.imencode(".png", cv2.cvtColor(processed, cv2.COLOR_GRAY2BGR))[1].tobytes()
+    # ÚPRAVA VIZUALIZACE: Vykreslíme jen to, co algoritmus reálně naměřil, do čistého plátna.
+    clean_map = np.zeros_like(img)
+    for p in deserialize_parts(parts_serialized):
+        cv2.drawContours(clean_map, [p["outer"]], -1, (255, 255, 255), 1, cv2.LINE_AA)
+        if p["holes"]:
+            cv2.drawContours(clean_map, p["holes"], -1, (255, 255, 255), 1, cv2.LINE_AA)
+
+    edge_vis_bytes = cv2.imencode(".png", clean_map)[1].tobytes()
     img_bytes_out = cv2.imencode(".png", img)[1].tobytes()
     return img_bytes_out, edge_vis_bytes, parts_serialized
 
@@ -544,19 +550,7 @@ def draw_legend_pil(cv_img, legend_defs):
     return cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
 
 
-def tol_row(label, measured, lo, hi, unit, extra="", skip=False):
-    if skip:
-        md = f"**{label}** — přeskočeno"
-        data = {
-            "Veličina": label,
-            "Naměřeno": None,
-            "Minimum": None,
-            "Maximum": None,
-            "Jednotka": unit,
-            "Výsledek": "Přeskočeno"
-        }
-        return md, data
-
+def tol_row(label, measured, lo, hi, unit, extra=""):
     ok = lo <= measured <= hi
     icon = "[OK]" if ok else "[NOK]"
     m_str = f"{measured:.3f}".rstrip("0").rstrip(".")
@@ -574,22 +568,22 @@ def tol_row(label, measured, lo, hi, unit, extra="", skip=False):
     return md, data
 
 
-# --- ROZŠÍŘENÁ ANALÝZA OTVORŮ ---
+# --- ROZŠÍŘENÁ ANALÝZA OTVORŮ S OKAMŽITÝM VÝPISEM ---
 def render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol, base_img, export_data_list):
     if len(holes) == 0:
         return False, export_data_list
 
     is_holes_nok = False
-    rows_html_holes = []  # Lokální seznam pro výsledky otvorů
+    rows_html_holes = []
 
     st.markdown("---")
-    st.markdown(f"**Analýza otvorů (Nalezeno: {len(holes)})**")
+    st.markdown(f"**Analýza vnitřních otvorů (Nalezeno: {len(holes)})**")
 
     hole_mode = st.segmented_control(
         "Typ analýzy otvorů",
         options=["circle", "polygon"],
         default="circle",
-        format_func=lambda x: "Kruhový otvor (Průměr, Kruhovitost)" if x == "circle" else "Hranatý otvor (Detailní geometrie)",
+        format_func=lambda x: "Kruhové (Průměr, Kruhovitost)" if x == "circle" else "Hranaté (Detailní geometrie)",
         key=f"hole_mode_{obj_i}_{mode_choice}"
     )
 
@@ -771,7 +765,6 @@ def render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol, 
                     rows_html_holes.append(r_md)
                     export_data_list.append(r_data)
 
-    # Výpis výsledků otvorů najednou pod konfigurací
     if rows_html_holes:
         st.markdown("---")
         st.markdown("**Výsledky tolerance otvorů**")
@@ -808,7 +801,7 @@ with st.sidebar:
 
     with st.expander("Detekce", expanded=False):
         st.caption("Parametry segmentace a kontur")
-        det_method = st.radio("Metoda segmentace", ["Prahování (Otsu) - plošné", "Hrany (Canny) - liniové"])
+        det_method = st.radio("Metoda segmentace", ["Prahování (Otsu) - plošné", "Hrany (Canny) - liniové"], index=1)
         invert_thresh = st.toggle("Tmavý objekt na světlém pozadí", value=True)
         st.markdown("---")
         canny_low = st.slider("Canny spodní", 0, 200, 50)
@@ -817,7 +810,7 @@ with st.sidebar:
         max_obj = st.slider("Max. objektů (0=vše)", 0, 20, 1)
         merge = st.toggle("Slučovat kontury", value=False)
         merge_dist = st.slider("Vzdálenost slučování [px]", 5, 100, 40, disabled=not merge)
-        detect_holes = st.toggle("Detekovat vnitřní díry (otvory)", value=False)
+        detect_holes = st.toggle("Detekovat vnitřní díry (otvory)", value=True)
 
     with st.expander("Detekce hran", expanded=False):
         st.caption("Parametry rozpoznání hran polygonu")
@@ -949,7 +942,7 @@ for obj_i, part in enumerate(parts):
             cm = circle_metrics(cnt, px_per_mm)
             is_nok = False
             export_data_list = []
-            rows_html_main = []  # Ukládání výsledků pro kruh
+            rows_html_main = []
 
             st.markdown("**Přesné kruhové metriky**")
             st.markdown(
@@ -1009,10 +1002,6 @@ for obj_i, part in enumerate(parts):
                     r_md, r_data = tol_row("Kruhovitost", circ, cfg["circ_min"], 100.0, "%")
                     rows_html_main.append(r_md)
                     export_data_list.append(r_data)
-                else:
-                    r_md, r_data = tol_row("Kruhovitost", 0, 0, 100, "%", skip=True)
-                    rows_html_main.append(r_md)
-                    export_data_list.append(r_data)
 
             with tc2:
                 st.markdown("**Průměr (fitovaný)**")
@@ -1036,10 +1025,6 @@ for obj_i, part in enumerate(parts):
                     r_md, r_data = tol_row("Průměr (fitovaný)", d_fit, lo, hi, "mm")
                     rows_html_main.append(r_md)
                     export_data_list.append(r_data)
-                else:
-                    r_md, r_data = tol_row("Průměr", 0, 0, 0, "mm", skip=True)
-                    rows_html_main.append(r_md)
-                    export_data_list.append(r_data)
 
             with tc3:
                 st.markdown("**Radiální odchylka**")
@@ -1056,18 +1041,13 @@ for obj_i, part in enumerate(parts):
                     r_md, r_data = tol_row("Radiální odchylka", cm["dev_mm"], 0.0, cfg["rad_max"], "mm")
                     rows_html_main.append(r_md)
                     export_data_list.append(r_data)
-                else:
-                    r_md, r_data = tol_row("Radiální odchylka", 0, 0, 0, "mm", skip=True)
-                    rows_html_main.append(r_md)
-                    export_data_list.append(r_data)
 
-            # Výpis výsledků pro kruh
-            st.markdown("---")
-            st.markdown("**Výsledky tolerance hlavního tvaru**")
-            for r in rows_html_main:
-                st.markdown(r)
+            if rows_html_main:
+                st.markdown("---")
+                st.markdown("**Výsledky tolerance hlavního tvaru**")
+                for r in rows_html_main:
+                    st.markdown(r)
 
-            # Otvory
             is_holes_nok, export_data_list = render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol,
                                                                   base_img, export_data_list)
             if is_holes_nok: is_nok = True
@@ -1115,7 +1095,7 @@ for obj_i, part in enumerate(parts):
             ]
 
             export_data_list = []
-            rows_html_main = []  # Ukládání výsledků pro polygon
+            rows_html_main = []
 
             st.markdown("**Vizualizace nalezených hran**")
             st.markdown(
@@ -1197,10 +1177,6 @@ for obj_i, part in enumerate(parts):
                     assign_highlight(ib, HCOLORS["par_b"])
                     rows_html_main.append(r_md)
                     export_data_list.append(r_data)
-                else:
-                    r_md, r_data = tol_row("Rovnoběžnost (odchylka)", 0, 0, 0, "°", skip=True)
-                    rows_html_main.append(r_md)
-                    export_data_list.append(r_data)
 
             with st.container():
                 st.markdown("**Kolmost dvou hran hlavního tvaru**")
@@ -1224,10 +1200,6 @@ for obj_i, part in enumerate(parts):
                     r_md, r_data = tol_row(f"Kolmost (odchylka)(H{ia + 1} | H{ib + 1})", dev, 0.0, cfg["perp_tol"], "°")
                     assign_highlight(ia, HCOLORS["perp_a"])
                     assign_highlight(ib, HCOLORS["perp_b"])
-                    rows_html_main.append(r_md)
-                    export_data_list.append(r_data)
-                else:
-                    r_md, r_data = tol_row("Kolmost (odchylka)", 0, 0, 0, "°", skip=True)
                     rows_html_main.append(r_md)
                     export_data_list.append(r_data)
 
@@ -1261,10 +1233,6 @@ for obj_i, part in enumerate(parts):
                     assign_highlight(ib, HCOLORS["ang_b"])
                     rows_html_main.append(r_md)
                     export_data_list.append(r_data)
-                else:
-                    r_md, r_data = tol_row("Úhel (libovolný)", 0, 0, 0, "°", skip=True)
-                    rows_html_main.append(r_md)
-                    export_data_list.append(r_data)
 
             with st.container():
                 st.markdown("**Délka vybrané hrany hlavního tvaru**")
@@ -1294,17 +1262,6 @@ for obj_i, part in enumerate(parts):
                         assign_highlight(ie, HCOLORS["len_e"])
                         rows_html_main.append(r_md)
                         export_data_list.append(r_data)
-                    else:
-                        r_md = "[NOK] Délka: hrana neexistuje"
-                        rows_html_main.append(r_md)
-                        r_data = {"Veličina": "Tolerance délky hrany", "Naměřeno": None,
-                                  "Minimum": None, "Maximum": None,
-                                  "Jednotka": "mm", "Výsledek": "Chyba (hrana chybí)"}
-                        export_data_list.append(r_data)
-                else:
-                    r_md, r_data = tol_row("Tolerance délky hrany", 0, 0, 0, "mm", skip=True)
-                    rows_html_main.append(r_md)
-                    export_data_list.append(r_data)
 
             with st.container():
                 st.markdown("**Rozměr objektu hlavního tvaru (šířka / výška)**")
@@ -1346,18 +1303,13 @@ for obj_i, part in enumerate(parts):
                         r_md, r_data = tol_row("Výška objektu", rh_mm, lo, hi, "mm")
                         rows_html_main.append(r_md)
                         export_data_list.append(r_data)
-                else:
-                    r_md, r_data = tol_row("Rozměry objektu", 0, 0, 0, "mm", skip=True)
-                    rows_html_main.append(r_md)
-                    export_data_list.append(r_data)
 
-            # Výpis výsledků hlavního tvaru najednou
-            st.markdown("---")
-            st.markdown("**Výsledky tolerance hlavního tvaru**")
-            for r in rows_html_main:
-                st.markdown(r)
+            if rows_html_main:
+                st.markdown("---")
+                st.markdown("**Výsledky tolerance hlavního tvaru**")
+                for r in rows_html_main:
+                    if r: st.markdown(r)
 
-            # Otvory
             is_holes_nok, export_data_list = render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol,
                                                                   base_img, export_data_list)
             if is_holes_nok: is_nok = True
@@ -1385,7 +1337,7 @@ for obj_i, part in enumerate(parts):
                     (HCOLORS["perp_b"],
                      f"H{ib + 1}  kolmost B  ({edges[ib]['length'] / px_per_mm:.1f} mm, {edges[ib]['angle']:.1f} deg)"),
                 ]
-            if cfg["ang_en"]:
+            if cfg.get("ang_en", False):
                 ia, ib = cfg["ang_a"], cfg["ang_b"]
                 legend_defs += [
                     (HCOLORS["ang_a"],
@@ -1393,7 +1345,7 @@ for obj_i, part in enumerate(parts):
                     (HCOLORS["ang_b"],
                      f"H{ib + 1}  uhel B  ({edges[ib]['length'] / px_per_mm:.1f} mm, {edges[ib]['angle']:.1f} deg)"),
                 ]
-            if cfg["len_en"] and cfg["len_edge"] < n_edges:
+            if cfg.get("len_en", False) and cfg["len_edge"] < n_edges:
                 ie = cfg["len_edge"]
                 legend_defs.append(
                     (HCOLORS["len_e"],
@@ -1408,9 +1360,9 @@ for obj_i, part in enumerate(parts):
             st.markdown("---")
             st.markdown("**Výsledky tolerance celého objektu**")
             if is_nok:
-                st.error(f"DÍL MIMO TOLERANCI | Alespoň jedna kontrola hlavního tvaru nebo děr selhala.")
+                st.error(f"MIMO TOLERANCI | Alespoň jedna kontrola hlavního tvaru nebo děr selhala.")
             else:
-                st.success(f"DÍL V TOLERANCI | Všechny provedené kontroly hlavního tvaru a děr prošly.")
+                st.success(f"V TOLERANCI | Všechny provedené kontroly hlavního tvaru a děr prošly.")
 
             df_export = pd.DataFrame(export_data_list)
             csv_data = df_export.to_csv(index=False).encode('utf-8-sig')
@@ -1423,10 +1375,10 @@ for obj_i, part in enumerate(parts):
             with dl_col1:
                 st.download_button(f"Stáhnout snímek (Objekt #{obj_i + 1})",
                                    data=img_buf.getvalue(),
-                                   file_name=f"viziometer_obj{obj_i + 1}.png",
+                                   file_name=f"Rozmerova_Detekce_obj{obj_i + 1}.png",
                                    mime="image/png", key=f"img_dl_{obj_i}", use_container_width=True)
             with dl_col2:
                 st.download_button(f"Stáhnout tabulku s daty (CSV)",
                                    data=csv_data,
-                                   file_name=f"viziometer_obj{obj_i + 1}_data.csv",
+                                   file_name=f"Rozmerova_Detekce_obj{obj_i + 1}_data.csv",
                                    mime="text/csv", key=f"csv_dl_{obj_i}", use_container_width=True)
