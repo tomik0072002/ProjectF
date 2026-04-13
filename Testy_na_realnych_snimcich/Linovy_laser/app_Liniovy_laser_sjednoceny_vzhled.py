@@ -92,28 +92,28 @@ def process_laser_scan(snimky_3d, params, progress_bar=None, status_text=None):
     profiles = []
 
     for i, img in enumerate(snimky_3d):
-        # 1. Oříznutí (ROI)
+        # Oříznutí (ROI)
         h, w = img.shape[:2]
         ct, cb = params['crop_t'], params['crop_b']
         cl, cr = params['crop_l'], params['crop_r']
 
         img_cropped = img[ct:h - cb, cl:w - cr]
 
-        # 2. Jas a kontrast
+        # Jas a kontrast
         if params['alpha'] != 1.0 or params['beta'] != 0:
             img_cropped = cv2.convertScaleAbs(img_cropped, alpha=params['alpha'], beta=params['beta'])
 
-        # 3. Extrakce kanálu
+        # Extrakce kanálu
         signal = extract_laser_signal(img_cropped, params['channel'])
 
-        # 4. Rozostření obrazu (Filtry)
+        # Rozostření obrazu (Filtry)
         if params['median_k'] > 1:
             k = params['median_k'] | 1  # Vždy liché číslo
             signal = cv2.medianBlur(signal, k)
         if params['gauss_sigma'] > 0:
             signal = cv2.GaussianBlur(signal, (0, 0), params['gauss_sigma'])
 
-        # 5. Morfologie 2D
+        # Morfologie 2D
         if params['morph_k'] > 1:
             k_size = params['morph_k'] | 1
             kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (k_size, k_size))
@@ -124,18 +124,9 @@ def process_laser_scan(snimky_3d, params, progress_bar=None, status_text=None):
             elif params['morph_op'] == 'Dilatace (ztloustnutí)':
                 signal = cv2.dilate(signal, kernel, iterations=1)
 
-        # 6. Extrakce profilu
+        # Extrakce profilu
         profile_cropped = get_laser_profile(signal, params['threshold'], params['peak_window'], params['laser_axis'])
 
-        # Korekce offsetu ořezu + vložení profilu zpět do pole původní velikosti.
-        #
-        # laser_axis=0 → laser je horizontální, pro každý ŘÁDEK (y) hledáme střed v ose X
-        #   - profil má délku (h - ct - cb)  → vkládáme od řádku ct  → offset_pos = ct
-        #   - souřadnice X středů jsou relativní k ořezu zleva         → offset_val = cl
-        #
-        # laser_axis=1 → laser je vertikální, pro každý SLOUPEC (x) hledáme střed v ose Y
-        #   - profil má délku (w - cl - cr)  → vkládáme od sloupce cl → offset_pos = cl
-        #   - souřadnice Y středů jsou relativní k ořezu shora         → offset_val = ct
         if params['laser_axis'] == 0:
             full_len = h
             offset_pos = ct
@@ -193,8 +184,6 @@ def process_laser_scan(snimky_3d, params, progress_bar=None, status_text=None):
 
 def create_figure(depth_map, stats, file_name, colormap):
     nonzero = depth_map[depth_map != 0]
-
-    # Široké plátno (aby měly spodní grafy místo), ale Depth mapa bude uvnitř zúžená
     fig = plt.figure(figsize=(16, 12))
     fig.patch.set_alpha(0.0)
     fig.suptitle(f"Liniový laser - sken: {file_name}", fontsize=14, fontweight='bold', color='gray')
@@ -321,18 +310,18 @@ with st.sidebar:
 
         st.markdown("**Osa: Pozice na senzoru** (výška snímku)")
         crop_t = st.number_input(
-            "Od dolního okraje [px]", min_value=0, value=0, step=10
+            "Od dolního okraje [px]", min_value=0, value=0, step=10, key="crop_t"
         )
         crop_b = st.number_input(
-            "Od horního okraje [px]", min_value=0, value=0, step=10
+            "Od horního okraje [px]", min_value=0, value=0, step=10, key="crop_b"
         )
 
         st.markdown("**Osa: Hloubka")
         crop_l = st.number_input(
-            "Od dolního okraje [px]", min_value=0, value=0, step=10
+            "Od dolního okraje [px]", min_value=0, value=0, step=10, key="crop_l"
         )
         crop_r = st.number_input(
-            "Od horního okraje [px]", min_value=0, value=0, step=10
+            "Od horního okraje [px]", min_value=0, value=0, step=10, key="crop_r"
         )
 
     with st.expander("Korekce a filtry", expanded=False):
@@ -465,7 +454,7 @@ if run_btn:
 
             if roi_errors:
                 for err in roi_errors:
-                    st.error(f"❌ Neplatné ROI: {err}")
+                    st.error(f"Neplatné ROI: {err}")
                 st.stop()
 
             roi_h = h_img - crop_t - crop_b
@@ -474,7 +463,7 @@ if run_btn:
 
             if roi_h < min_roi_px or roi_w < min_roi_px:
                 st.error(
-                    f"❌ ROI je příliš malé: výsledná oblast by měla pouze "
+                    f"ROI je příliš malé: výsledná oblast by měla pouze "
                     f"**{roi_w} × {roi_h} px** (minimum je {min_roi_px} × {min_roi_px} px). "
                     f"Zmenšete hodnoty ořezu."
                 )
