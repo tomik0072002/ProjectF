@@ -645,6 +645,28 @@ def render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol, 
                 "Obvod [mm]": round(cv2.arcLength(hole_cnt, True) / px_per_mm, 3)
             })
         st.dataframe(pd.DataFrame(holes_data), use_container_width=True)
+        # NOVÉ: Automatický export všech naměřených rozměrů děr do CSV
+        for h_row in holes_data:
+            otvor_nazev = h_row["Otvor"]
+            for klic, hodnota in h_row.items():
+                if klic == "Otvor":
+                    continue
+
+                # Zjištění jednotky z názvu sloupce
+                jednotka = ""
+                if "[mm]" in klic:
+                    jednotka = "mm"
+                elif "[%]" in klic:
+                    jednotka = "%"
+
+                export_data_list.append({
+                    "Veličina": f"Díra {otvor_nazev}: {klic.split(' [')[0]}",
+                    "Naměřeno": hodnota,
+                    "Minimum": None,
+                    "Maximum": None,
+                    "Jednotka": jednotka,
+                    "Výsledek": "Info"  # Značí, že jde o čisté měření, nikoliv toleranční test
+                })
 
         st.markdown("---")
         st.markdown("**Detailní geometrické tolerance konkrétního otvoru**")
