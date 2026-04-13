@@ -426,7 +426,6 @@ def detect_objects(img_bytes, _cam_mtx, _dist, canny_low, canny_high,
                 "holes": holes_s
             })
 
-    # ÚPRAVA VIZUALIZACE: Vykreslíme jen to, co algoritmus reálně naměřil, do čistého plátna.
     clean_map = np.zeros_like(img)
     for p in deserialize_parts(parts_serialized):
         cv2.drawContours(clean_map, [p["outer"]], -1, (255, 255, 255), 1, cv2.LINE_AA)
@@ -687,7 +686,8 @@ def render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol, 
             x1, x2 = max(0, hx - pad), min(base_img.shape[1], hx + hw + pad)
             h_cropped = h_preview[y1:y2, x1:x2]
 
-            hc_1, hc_2, hc_3 = st.columns([1, 2, 1])
+            # ÚPRAVA VELIKOSTI: Změněno z [1, 2, 1] na [1, 1, 1]
+            hc_1, hc_2, hc_3 = st.columns([1, 1, 1])
             with hc_2:
                 st.image(cv_to_pil(h_cropped), caption=f"Detail hran Otvoru #{sel_h_idx + 1}", use_container_width=True)
 
@@ -705,7 +705,7 @@ def render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol, 
                                                   disabled=not cfg["h_par_en"], format_func=h_edge_label) - 1
                 cfg["h_par_b"] = hpc[2].selectbox("Hrana B", h_nums, min(1, n_h_edges - 1), key=f"h_par_b_{obj_i}",
                                                   disabled=not cfg["h_par_en"], format_func=h_edge_label) - 1
-                cfg["h_par_tol"] = hpc[3].number_input("Max. odchylka [°]", 0.0, 90.0, 5.0, step=0.5,
+                cfg["h_par_tol"] = hpc[3].number_input("Max. odchylka [°]", 0.0, 90.0, 2.0, step=0.5,
                                                        key=f"h_par_tol_{obj_i}", disabled=not cfg["h_par_en"])
 
                 if cfg["h_par_en"]:
@@ -726,7 +726,7 @@ def render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol, 
                                                    disabled=not cfg["h_perp_en"], format_func=h_edge_label) - 1
                 cfg["h_perp_b"] = hqc[2].selectbox("Hrana B ", h_nums, min(1, n_h_edges - 1), key=f"h_perp_b_{obj_i}",
                                                    disabled=not cfg["h_perp_en"], format_func=h_edge_label) - 1
-                cfg["h_perp_tol"] = hqc[3].number_input("Max. odch. od 90° [°]", 0.0, 45.0, 5.0, step=0.5,
+                cfg["h_perp_tol"] = hqc[3].number_input("Max. odch. od 90° [°]", 0.0, 45.0, 2.0, step=0.5,
                                                         key=f"h_perp_tol_{obj_i}", disabled=not cfg["h_perp_en"])
 
                 if cfg["h_perp_en"]:
@@ -984,7 +984,8 @@ for obj_i, part in enumerate(parts):
             if holes:
                 draw_holes_with_labels(circ_vis, holes)
 
-            c_v1, c_v2, c_v3 = st.columns([1, 2, 1])
+            # ÚPRAVA VELIKOSTI: Změněno z [1, 2, 1] na [1, 1, 1]
+            c_v1, c_v2, c_v3 = st.columns([1, 1, 1])
             with c_v2:
                 st.image(cv_to_pil(circ_vis), use_container_width=True)
 
@@ -1026,7 +1027,7 @@ for obj_i, part in enumerate(parts):
                     export_data_list.append(r_data)
 
             with tc2:
-                st.markdown("**Průměr (fitovaný)**")
+                st.markdown("**Průměr**")
                 cfg["diam_en"] = st.checkbox("Aktivní", value=True, key=f"diam_en_{obj_i}_diam")
                 cfg["diam_nom"] = st.number_input("Jmenovitý průměr [mm]", 0.0, 2000.0,
                                                   round(cm["r_fit_mm"] * 2, 2), step=0.1,
@@ -1044,7 +1045,7 @@ for obj_i, part in enumerate(parts):
                     hi = cfg["diam_nom"] + cfg["diam_plus"]
                     ok = lo <= d_fit <= hi
                     if not ok: is_nok = True
-                    r_md, r_data = tol_row("Průměr (fitovaný)", d_fit, lo, hi, "mm")
+                    r_md, r_data = tol_row("Průměr", d_fit, lo, hi, "mm")
                     rows_html_main.append(r_md)
                     export_data_list.append(r_data)
 
@@ -1077,9 +1078,9 @@ for obj_i, part in enumerate(parts):
             st.markdown("---")
             st.markdown("**Výsledky tolerance celého objektu**")
             if is_nok:
-                st.error(f"DÍL MIMO TOLERANCI | Alespoň jedna kontrola hlavního tvaru nebo děr selhala.")
+                st.error(f"MIMO TOLERANCI | Alespoň jedna kontrola hlavního tvaru nebo děr byla mimo toleranci.")
             else:
-                st.success(f"DÍL V TOLERANCI | Všechny provedené kontroly hlavního tvaru a děr prošly.")
+                st.success(f"V TOLERANCI | Všechny provedené kontroly hlavního tvaru a děr jsou v tolerancích.")
 
             df_export = pd.DataFrame(export_data_list)
             csv_data = df_export.to_csv(index=False).encode('utf-8-sig')
@@ -1138,7 +1139,8 @@ for obj_i, part in enumerate(parts):
             ]
             edge_preview = draw_legend_pil(edge_preview, preview_legend)
 
-            c_p1, c_p2, c_p3 = st.columns([1, 2, 1])
+            # ÚPRAVA VELIKOSTI: Změněno z [1, 2, 1] na [1, 1, 1]
+            c_p1, c_p2, c_p3 = st.columns([1, 1, 1])
             with c_p2:
                 st.image(cv_to_pil(edge_preview), use_container_width=True)
 
@@ -1185,7 +1187,7 @@ for obj_i, part in enumerate(parts):
                                                key=f"par_b_{obj_i}",
                                                disabled=not cfg["par_en"],
                                                format_func=edge_label) - 1
-                cfg["par_tol"] = pc[3].number_input("Max. odchylka [°]", 0.0, 90.0, 5.0,
+                cfg["par_tol"] = pc[3].number_input("Max. odchylka [°]", 0.0, 90.0, 2.0,
                                                     step=0.5, key=f"par_tol_{obj_i}",
                                                     disabled=not cfg["par_en"])
                 if cfg["par_en"]:
@@ -1211,7 +1213,7 @@ for obj_i, part in enumerate(parts):
                                                 key=f"perp_b_{obj_i}",
                                                 disabled=not cfg["perp_en"],
                                                 format_func=edge_label) - 1
-                cfg["perp_tol"] = qc[3].number_input("Max. odch. od 90° [°]", 0.0, 45.0, 5.0,
+                cfg["perp_tol"] = qc[3].number_input("Max. odch. od 90° [°]", 0.0, 45.0, 2.0,
                                                      step=0.5, key=f"perp_tol_{obj_i}",
                                                      disabled=not cfg["perp_en"])
                 if cfg["perp_en"]:
@@ -1375,7 +1377,8 @@ for obj_i, part in enumerate(parts):
                 )
             annotated_legend = draw_legend_pil(annotated, legend_defs)
 
-            c_a1, c_a2, c_a3 = st.columns([1, 2, 1])
+            # ÚPRAVA VELIKOSTI: Změněno z [1, 2, 1] na [1, 1, 1]
+            c_a1, c_a2, c_a3 = st.columns([1, 1, 1])
             with c_a2:
                 st.image(cv_to_pil(annotated_legend), use_container_width=True)
 

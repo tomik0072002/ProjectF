@@ -422,7 +422,7 @@ if hotspoty:
     df = pd.DataFrame(rows)
     st.dataframe(df, use_container_width=True, hide_index=True)
 
-    # Tlačítka pro stažení vedle sebe
+    # Tlačítka pro stažení
     dl_col1, dl_col2 = st.columns(2)
     with dl_col1:
         st.download_button(
