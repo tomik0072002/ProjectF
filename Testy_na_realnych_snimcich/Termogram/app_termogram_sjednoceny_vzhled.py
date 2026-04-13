@@ -13,12 +13,10 @@ from PIL import Image
 # Načtení obrázku loga
 script_dir = os.path.dirname(os.path.abspath(__file__))
 logo_path = os.path.join(script_dir, "vut_brno_00.jpg")
-try:
-    logo = Image.open(logo_path)
-except FileNotFoundError:
-    logo = "🔥"
+logo = Image.open(logo_path)
 
-# ── Nastavení stránky ──────────────────────────────────────────────────────────
+
+# Nastavení stránky
 st.set_page_config(
     page_title="FV Hotspot Detektor",
     page_icon=logo,
@@ -27,7 +25,7 @@ st.set_page_config(
 )
 
 
-# ── Datová třída ───────────────────────────────────────────────────────────────
+# Datová třída
 @dataclass
 class Hotspot:
     id: int
@@ -41,7 +39,7 @@ class Hotspot:
     max_z: float
     mean_z: float
     max_intensity: float
-    confidence: int  # interní skóre
+    confidence: int
 
     @property
     def cx(self):
@@ -60,7 +58,7 @@ class Hotspot:
         return "Slabý"
 
 
-# ── Detekce a zpracování ───────────────────────────────────────────────────────
+# Detekce a zpracování obrazu
 def priprav(img: np.ndarray, blur_k: int) -> np.ndarray:
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32)
     if blur_k >= 3:
@@ -169,7 +167,7 @@ def detekce(img_bytes: bytes, params: str):
     return img, gray, zmap, maska_surova, merged, hotspoty
 
 
-# ── Anotace ────────────────────────────────────────────────────────────────────
+# Anotace
 CONF_BGR = {
     0: (160, 160, 160),
     1: (0, 210, 210),
@@ -230,7 +228,7 @@ def render_zscore(zmap: np.ndarray, z_thresh: float) -> bytes:
     return fig_to_bytes(fig)
 
 
-# ── Konfigurace a Presets ──────────────────────────────────────────────────────
+# Konfigurace a přednastavení
 FILTER_ZAVAZNOST_MAP = {
     "Vše (i slabé nálezy)": 0,
     "Střední a kritické": 1,
@@ -260,7 +258,7 @@ if "sl_alpha" not in st.session_state:
     apply_preset("standard")
     st.session_state["active_preset"] = "Standard"
 
-# ── Sidebar ────────────────────────────────────────────────────────────────────
+# Sidebar
 with st.sidebar:
     st.markdown("### FV Hotspot Detektor")
     st.caption("Demonstrátor zpracování obrazu")
@@ -273,12 +271,9 @@ with st.sidebar:
     cols = st.columns(3)
 
 
-    # Pomocná funkce pro barvu tlačítka
     def get_btn_type(label):
         return "primary" if st.session_state.get("active_preset") == label else "secondary"
 
-
-    # Zjednodušená logika tlačítek pomocí st.rerun()
     if cols[0].button("Standard", use_container_width=True, type=get_btn_type("Standard")):
         apply_preset("standard")
         st.session_state["active_preset"] = "Standard"
@@ -327,7 +322,7 @@ with st.sidebar:
         )
         conf_min = FILTER_ZAVAZNOST_MAP[filter_label]
 
-# ── Hlavní část ────────────────────────────────────────────────────────────────
+# Hlavní část
 st.title("Detekce Hotspotů")
 
 if uploaded is None:
@@ -366,7 +361,7 @@ with st.spinner("Počítám analýzu..."):
 
 annotated = anotuj(img, hotspoty)
 
-# ── Kontinuální rozvržení (Pipeline pro komisi pod sebou) ──────────────────────
+# Pipeline aplikace
 
 st.markdown("---")
 st.header("Vstup a Předzpracování")
@@ -399,7 +394,7 @@ m2.metric("Kritické nálezy", n_krit)
 m3.metric("Střední nálezy", n_str)
 m4.metric("Slabé nálezy", n_slab)
 
-# Uložení finálního obrázku do prostředního ze 3 sloupců pro zmenšení jeho velikosti
+
 col_left, col_center, col_right = st.columns([1, 2, 1])
 with col_center:
     st.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), use_container_width=True)
@@ -409,7 +404,6 @@ st.markdown("#### Export výsledků")
 
 fname = uploaded.name.rsplit(".", 1)[0]
 
-# Převod anotovaného snímku na bajty pro stažení
 _, buffer = cv2.imencode(".png", annotated)
 img_dl_bytes = buffer.tobytes()
 
@@ -449,7 +443,6 @@ if hotspoty:
 else:
     st.warning("Při aktuálním nastavení nebyly detekovány žádné hotspoty.")
 
-    # Tlačítko pro stažení samotného snímku, i když nebyly nalezeny hotspoty
     st.download_button(
         "Stáhnout snímek (PNG)",
         data=img_dl_bytes,
