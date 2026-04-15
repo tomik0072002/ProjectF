@@ -37,6 +37,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
+# ─── Pomocné funkce pro ADAPTIVNÍ MĚŘÍTKO ─────────────────────────────────────
+def get_drawing_scale(img_h, img_w, min_scale=0.1):
+    """Vypočítá koeficient měřítka přímo úměrný rozlišení obrázku (nebo výřezu)."""
+    diagonal = math.sqrt(img_h ** 2 + img_w ** 2)
+    reference_diag = 1500.0
+    return max(min_scale, diagonal / reference_diag)
+
+
 def cv_to_pil(bgr):
     return Image.fromarray(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
 
@@ -47,6 +55,11 @@ def calibrate(img_bytes, rows, cols, square_mm):
     arr = np.frombuffer(img_bytes, np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    d_scale = get_drawing_scale(gray.shape[0], gray.shape[1])
+    dot_r = max(3, int(12 * d_scale))
+    dot_th = max(1, int(2 * d_scale))
+
     pattern = (cols, rows)
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
     objp = np.zeros((rows * cols, 3), np.float32)
@@ -103,15 +116,24 @@ def calibrate(img_bytes, rows, cols, square_mm):
     pts = corners_ref.reshape(-1, 2)
     for i, (cx, cy) in enumerate(pts):
         color = (int(255 * i / len(pts)), int(255 * (1 - i / len(pts))), 180)
-        cv2.circle(debug, (int(cx), int(cy)), 12, color, -1)
-        cv2.circle(debug, (int(cx), int(cy)), 12, (255, 255, 255), 2)
+        cv2.circle(debug, (int(cx), int(cy)), dot_r, color, -1)
+        cv2.circle(debug, (int(cx), int(cy)), dot_r, (255, 255, 255), dot_th)
     return cam_mtx, dist, ppm, debug, None
 
 
 # ─── Geometry ────────────────────────────────────────────────────────────────
 
 def draw_holes_with_labels(out, holes):
-    cv2.drawContours(out, holes, -1, (0, 0, 255), 2, cv2.LINE_AA)
+    h_img, w_img = out.shape[:2]
+    d_scale = get_drawing_scale(h_img, w_img)
+
+    fs = max(0.4, 0.7 * d_scale)
+    th = max(1, int(2 * d_scale))
+    line_th = max(1, int(2 * d_scale))
+    badge_r = max(10, int(22 * d_scale))
+    text_y_offset = int(7 * d_scale)
+
+    cv2.drawContours(out, holes, -1, (0, 0, 255), line_th, cv2.LINE_AA)
     for i, h_cnt in enumerate(holes):
         M = cv2.moments(h_cnt)
         if M["m00"] != 0:
@@ -121,26 +143,24 @@ def draw_holes_with_labels(out, holes):
             cx, cy = int(h_cnt[0][0][0]), int(h_cnt[0][0][1])
 
         label = f"#{i + 1}"
-        cv2.circle(out, (cx, cy), 12, (255, 255, 255), -1)
-        cv2.circle(out, (cx, cy), 12, (0, 0, 255), 1, cv2.LINE_AA)
-        tw = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0][0]
-        cv2.putText(out, label, (cx - tw // 2, cy + 4),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1, cv2.LINE_AA)
+        cv2.circle(out, (cx, cy), badge_r, (255, 255, 255), -1)
+        cv2.circle(out, (cx, cy), badge_r, (0, 0, 255), line_th, cv2.LINE_AA)
+
+        tw = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs, th)[0][0]
+        cv2.putText(out, label, (cx - tw // 2, cy + text_y_offset),
+                    cv2.FONT_HERSHEY_SIMPLEX, fs, (0, 0, 0), th, cv2.LINE_AA)
 
 
 def clean_polygon_vertices(pts, peri, angle_merge_tol=6.0):
-    """Odstraňuje mikro-hrany (šum) a narovnává mělké úhly."""
     pts = list(pts)
     changed = True
     min_len_px = max(3.0, 0.015 * peri)
-
     max_iters = 100
     iters = 0
     while changed and len(pts) > 3 and iters < max_iters:
         changed = False
         iters += 1
         n = len(pts)
-
         for i in range(n):
             p_curr = pts[i]
             p_next = pts[(i + 1) % n]
@@ -149,31 +169,24 @@ def clean_polygon_vertices(pts, peri, angle_merge_tol=6.0):
                 pts.pop((i + 1) % n)
                 changed = True
                 break
-
         if changed: continue
-
         n = len(pts)
         for i in range(n):
             p_prev = pts[(i - 1) % n]
             p_curr = pts[i]
             p_next = pts[(i + 1) % n]
-
             v1 = p_curr - p_prev
             v2 = p_next - p_curr
-
             n1 = np.linalg.norm(v1)
             n2 = np.linalg.norm(v2)
-
             if n1 > 0 and n2 > 0:
                 cos_theta = np.dot(v1, v2) / (n1 * n2)
                 cos_theta = np.clip(cos_theta, -1.0, 1.0)
                 angle_diff = math.degrees(math.acos(cos_theta))
-
                 if angle_diff < angle_merge_tol:
                     pts.pop(i)
                     changed = True
                     break
-
     return np.array(pts)
 
 
@@ -337,6 +350,9 @@ def circle_metrics(cnt, px_per_mm):
 
 def draw_circle_overlay(base_img, cm, px_per_mm):
     out = base_img.copy()
+    h_img, w_img = out.shape[:2]
+    d_scale = get_drawing_scale(h_img, w_img)
+
     cx, cy = int(cm["cx_px"]), int(cm["cy_px"])
     r_fit_px = int(cm["r_fit_mm"] * px_per_mm)
     r_max_px = int(cm["r_max_mm"] * px_per_mm)
@@ -346,23 +362,26 @@ def draw_circle_overlay(base_img, cm, px_per_mm):
     c_max = (0, 94, 213)
     c_min = (0, 158, 115)
 
+    line_th = max(1, int(2 * d_scale))
+    marker_size = max(5, int(15 * d_scale))
+
     for a in range(0, 360, 4):
         s, e = math.radians(a), math.radians(a + 2)
         cv2.line(out,
                  (cx + int(r_fit_px * math.cos(s)), cy + int(r_fit_px * math.sin(s))),
                  (cx + int(r_fit_px * math.cos(e)), cy + int(r_fit_px * math.sin(e))),
-                 c_fit, 2, cv2.LINE_AA)
+                 c_fit, line_th, cv2.LINE_AA)
 
-    cv2.circle(out, (cx, cy), r_max_px, c_max, 1, cv2.LINE_AA)
-    cv2.circle(out, (cx, cy), r_min_px, c_min, 1, cv2.LINE_AA)
-    cv2.drawMarker(out, (cx, cy), (0, 0, 0), cv2.MARKER_CROSS, 15, 1)
+    cv2.circle(out, (cx, cy), r_max_px, c_max, max(1, int(1 * d_scale)), cv2.LINE_AA)
+    cv2.circle(out, (cx, cy), r_min_px, c_min, max(1, int(1 * d_scale)), cv2.LINE_AA)
+    cv2.drawMarker(out, (cx, cy), (0, 0, 0), cv2.MARKER_CROSS, marker_size, max(1, int(1 * d_scale)))
     return out
 
 
 # ─── Detection ───────────────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
 def detect_objects(img_bytes, _cam_mtx, _dist, canny_low, canny_high,
-                   min_area, max_obj, merge, merge_dist, detect_holes, det_method, invert_thresh):
+                   min_area, max_obj, merge, merge_dist, detect_holes, det_method, invert_thresh, min_hole_area):
     arr = np.frombuffer(img_bytes, np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
 
@@ -404,15 +423,12 @@ def detect_objects(img_bytes, _cam_mtx, _dist, canny_low, canny_high,
 
     if hierarchy is not None:
         hierarchy = hierarchy[0]
-
         raw_parts = []
         for i, cnt in enumerate(contours):
             if hierarchy[i][3] == -1:
                 outer_area = cv2.contourArea(cnt)
-
                 if outer_area > 0.98 * total_img_area:
                     continue
-
                 if outer_area >= min_area:
                     holes = []
                     if detect_holes:
@@ -420,20 +436,17 @@ def detect_objects(img_bytes, _cam_mtx, _dist, canny_low, canny_high,
                         while child_idx != -1:
                             child_cnt = contours[child_idx]
                             child_area = cv2.contourArea(child_cnt)
-
                             if child_area < 0.90 * outer_area:
-                                if child_area >= 20:
+                                if child_area >= min_hole_area:
                                     holes.append(child_cnt)
                             else:
                                 gc_idx = hierarchy[child_idx][2]
                                 while gc_idx != -1:
                                     gc_cnt = contours[gc_idx]
-                                    if cv2.contourArea(gc_cnt) >= 20:
+                                    if cv2.contourArea(gc_cnt) >= min_hole_area:
                                         holes.append(gc_cnt)
                                     gc_idx = hierarchy[gc_idx][0]
-
                             child_idx = hierarchy[child_idx][0]
-
                     raw_parts.append({
                         "outer": cnt,
                         "holes": holes,
@@ -452,11 +465,13 @@ def detect_objects(img_bytes, _cam_mtx, _dist, canny_low, canny_high,
                 "holes": holes_s
             })
 
+    d_scale_map = get_drawing_scale(img_h, img_w)
+    map_th = max(1, int(1 * d_scale_map))
     clean_map = np.zeros_like(img)
     for p in deserialize_parts(parts_serialized):
-        cv2.drawContours(clean_map, [p["outer"]], -1, (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.drawContours(clean_map, [p["outer"]], -1, (255, 255, 255), map_th, cv2.LINE_AA)
         if p["holes"]:
-            cv2.drawContours(clean_map, p["holes"], -1, (255, 255, 255), 1, cv2.LINE_AA)
+            cv2.drawContours(clean_map, p["holes"], -1, (255, 255, 255), map_th, cv2.LINE_AA)
 
     edge_vis_bytes = cv2.imencode(".png", clean_map)[1].tobytes()
     img_bytes_out = cv2.imencode(".png", img)[1].tobytes()
@@ -474,9 +489,19 @@ def deserialize_parts(parts_s):
 
 def draw_edge_map(base_img, edges, highlights, raw_cnt=None):
     out = base_img.copy()
+    h_img, w_img = out.shape[:2]
+
+    d_scale = get_drawing_scale(h_img, w_img)
+
+    th_dash = max(1, int(1.5 * d_scale))
+    th_highlight = max(1, int(3 * d_scale))
+    th_badge_outline = max(1, int(2 * d_scale))
+    th_raw_cnt = max(1, int(1.5 * d_scale))
+    dash_len = max(2, int(10 * d_scale))
+    gap_len = max(2, int(10 * d_scale))
 
     if raw_cnt is not None:
-        cv2.drawContours(out, [raw_cnt], 0, (160, 160, 160), 1, cv2.LINE_AA)
+        cv2.drawContours(out, [raw_cnt], 0, (160, 160, 160), th_raw_cnt, cv2.LINE_AA)
 
     for i, e in enumerate(edges):
         if i in highlights:
@@ -486,8 +511,6 @@ def draw_edge_map(base_img, edges, highlights, raw_cnt=None):
         dist = int(np.linalg.norm(np.array(p2) - np.array(p1)))
         if dist == 0:
             continue
-
-        dash_len, gap_len = 8, 8
         dx = (p2[0] - p1[0]) / dist
         dy = (p2[1] - p1[1]) / dist
         pos = 0
@@ -497,7 +520,7 @@ def draw_edge_map(base_img, edges, highlights, raw_cnt=None):
             if drawing:
                 sx, sy = int(p1[0] + pos * dx), int(p1[1] + pos * dy)
                 ex, ey = int(p1[0] + seg_end * dx), int(p1[1] + seg_end * dy)
-                cv2.line(out, (sx, sy), (ex, ey), (150, 150, 150), 1, cv2.LINE_AA)
+                cv2.line(out, (sx, sy), (ex, ey), (150, 150, 150), th_dash, cv2.LINE_AA)
             pos = seg_end
             drawing = not drawing
 
@@ -507,72 +530,85 @@ def draw_edge_map(base_img, edges, highlights, raw_cnt=None):
         p1 = tuple(e["p1"].astype(int))
         p2 = tuple(e["p2"].astype(int))
         color_bgr = highlights[i]
-        cv2.line(out, p1, p2, color_bgr, 3, cv2.LINE_AA)
+        cv2.line(out, p1, p2, color_bgr, th_highlight, cv2.LINE_AA)
+
+    badge_r_highlight = max(10, int(24 * d_scale))
+    badge_r_normal = max(8, int(20 * d_scale))
+    text_y_offset = int(6 * d_scale)
+
+    fs_edge = max(0.4, 0.7 * d_scale)
+    fs_edge_hi = max(0.4, 0.8 * d_scale)
+    th_edge_text = max(1, int(2 * d_scale))
 
     for i, e in enumerate(edges):
         mid = tuple(e["mid"].astype(int))
         is_hi = i in highlights
         badge_color = highlights[i] if is_hi else (120, 120, 120)
-        badge_r = 14 if is_hi else 12
+        curr_badge_r = badge_r_highlight if is_hi else badge_r_normal
 
-        cv2.circle(out, mid, badge_r, (255, 255, 255), -1)
-        cv2.circle(out, mid, badge_r, badge_color, 2 if is_hi else 1, cv2.LINE_AA)
+        cv2.circle(out, mid, curr_badge_r, (255, 255, 255), -1)
+        curr_badge_th = th_badge_outline if is_hi else max(1, int(1 * d_scale))
+        cv2.circle(out, mid, curr_badge_r, badge_color, curr_badge_th, cv2.LINE_AA)
 
         label = str(i + 1)
-        fs = 0.5 if is_hi else 0.4
-        tw = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs, 1)[0][0]
-        cv2.putText(out, label, (mid[0] - tw // 2, mid[1] + 4),
-                    cv2.FONT_HERSHEY_SIMPLEX, fs, (0, 0, 0), 1, cv2.LINE_AA)
+        curr_fs = fs_edge_hi if is_hi else fs_edge
+
+        tw = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, curr_fs, th_edge_text)[0][0]
+        cv2.putText(out, label, (mid[0] - tw // 2, mid[1] + text_y_offset),
+                    cv2.FONT_HERSHEY_SIMPLEX, curr_fs, (0, 0, 0), th_edge_text, cv2.LINE_AA)
 
     return out
 
 
-def draw_legend_pil(cv_img, legend_defs):
-    from PIL import ImageFont, ImageDraw
-    pil = Image.fromarray(cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB))
-    draw = ImageDraw.Draw(pil)
-
-    font_size = 20
-    try:
-        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
-    except Exception:
-        font = ImageFont.load_default()
-
+def draw_legend_cv(cv_img, legend_defs):
     if not legend_defs:
-        return cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
+        return cv_img
 
-    pad = 12
-    swatch = 18
-    gap = 8
-    line_h = font_size + 6
-    panel_w = max(
-        cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)[0][0] + swatch + gap + pad * 2
-        for _, txt in legend_defs
-    ) + 60
-    panel_h = len(legend_defs) * line_h + pad * 2 + 4
+    out = cv_img.copy()
+    h_img, w_img = out.shape[:2]
+    d_scale = get_drawing_scale(h_img, w_img)
 
-    x0, y0 = 10, 10
-    overlay = Image.new("RGBA", pil.size, (0, 0, 0, 0))
-    ov_draw = ImageDraw.Draw(overlay)
-    ov_draw.rounded_rectangle(
-        [x0, y0, x0 + panel_w, y0 + panel_h],
-        radius=8,
-        fill=(255, 255, 255, 230),
-        outline=(100, 100, 100, 255),
-        width=1,
-    )
-    pil = pil.convert("RGBA")
-    pil = Image.alpha_composite(pil, overlay).convert("RGB")
-    draw = ImageDraw.Draw(pil)
+    fs = max(0.4, 0.7 * d_scale)
+    th = max(1, int(1.5 * d_scale))
+    pad = max(10, int(20 * d_scale))
+    swatch = max(12, int(25 * d_scale))
+    gap = max(6, int(15 * d_scale))
+    line_spacing = max(6, int(15 * d_scale))
 
-    for idx, (bgr, txt) in enumerate(legend_defs):
-        rgb = (bgr[2], bgr[1], bgr[0])
-        ty = y0 + pad + idx * line_h
-        sx = x0 + pad
-        draw.rectangle([sx, ty + 2, sx + swatch, ty + 2 + swatch - 4], fill=rgb)
-        draw.text((sx + swatch + gap, ty), txt, font=font, fill=(0, 0, 0))
+    max_tw = 0
+    max_th = 0
+    for _, txt in legend_defs:
+        (tw, th_txt), _ = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, fs, th)
+        max_tw = max(max_tw, tw)
+        max_th = max(max_th, th_txt)
 
-    return cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
+    row_h = max(swatch, max_th)
+
+    panel_w = pad * 2 + swatch + gap + max_tw
+    panel_h = pad * 2 + (len(legend_defs) * row_h) + ((len(legend_defs) - 1) * line_spacing)
+
+    x0, y0 = max(10, int(20 * d_scale)), max(10, int(20 * d_scale))
+
+    overlay = out.copy()
+    cv2.rectangle(overlay, (x0, y0), (x0 + panel_w, y0 + panel_h), (255, 255, 255), -1)
+    cv2.addWeighted(overlay, 0.85, out, 0.15, 0, out)
+
+    cv2.rectangle(out, (x0, y0), (x0 + panel_w, y0 + panel_h), (100, 100, 100), max(1, int(1 * d_scale)))
+
+    curr_y = y0 + pad
+    for bgr, txt in legend_defs:
+        cv2.rectangle(out, (x0 + pad, curr_y), (x0 + pad + swatch, curr_y + swatch), bgr, -1)
+        cv2.rectangle(out, (x0 + pad, curr_y), (x0 + pad + swatch, curr_y + swatch), (50, 50, 50),
+                      max(1, int(1 * d_scale)))
+
+        (tw, th_txt), _ = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, fs, th)
+        text_y = curr_y + (swatch + th_txt) // 2
+        cv2.putText(out, txt, (x0 + pad + swatch + gap, text_y), cv2.FONT_HERSHEY_SIMPLEX, fs, (0, 0, 0), th,
+                    cv2.LINE_AA)
+
+        curr_y += row_h + line_spacing
+
+    return out
 
 
 def tol_row(label, measured, lo, hi, unit, extra=""):
@@ -580,15 +616,10 @@ def tol_row(label, measured, lo, hi, unit, extra=""):
     icon = "[OK]" if ok else "[NOK]"
     m_str = f"{measured:.3f}".rstrip("0").rstrip(".")
     if m_str == "": m_str = "0"
-
     md = f"**{icon} {label}**: `{m_str} {unit}` ∈ `[{lo:.2f} – {hi:.2f} {unit}]` {extra}"
     data = {
-        "Veličina": label,
-        "Naměřeno": round(measured, 3),
-        "Minimum": round(lo, 3),
-        "Maximum": round(hi, 3),
-        "Jednotka": unit,
-        "Výsledek": "OK" if ok else "NOK"
+        "Veličina": label, "Naměřeno": round(measured, 3), "Minimum": round(lo, 3),
+        "Maximum": round(hi, 3), "Jednotka": unit, "Výsledek": "OK" if ok else "NOK"
     }
     return md, data
 
@@ -605,9 +636,7 @@ def render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol, 
     st.markdown(f"**Analýza vnitřních otvorů (Nalezeno: {len(holes)})**")
 
     hole_mode = st.segmented_control(
-        "Typ analýzy otvorů",
-        options=["circle", "polygon"],
-        default="circle",
+        "Typ analýzy otvorů", options=["circle", "polygon"], default="circle",
         format_func=lambda x: "Kruhové (Průměr, Kruhovitost)" if x == "circle" else "Hranaté (Detailní geometrie)",
         key=f"hole_mode_{obj_i}_{mode_choice}"
     )
@@ -629,11 +658,14 @@ def render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol, 
         st.markdown("**Tolerance kruhových otvorů**")
         hc1, hc2, hc3, hc4, hc5 = st.columns(5)
         cfg["h_en_c"] = hc1.checkbox("Průměr", key=f"h_en_{obj_i}_{mode_choice}_c")
-        cfg["h_nom"] = hc2.number_input("Jmen. [mm]", 0.0, 500.0, float(holes_data[0]["Průměr (fit) [mm]"]), step=0.1,
+
+        default_diam = float(holes_data[0]["Průměr (fit) [mm]"]) if holes_data else 10.0
+        max_diam_limit = float(max(500.0, default_diam * 2.0))
+
+        cfg["h_nom"] = hc2.number_input("Jmen. [mm]", 0.0, max_diam_limit, default_diam, step=0.1,
                                         key=f"h_nom_{obj_i}_{mode_choice}_c", disabled=not cfg["h_en_c"])
         cfg["h_tol"] = hc3.number_input("Tol. ± [mm]", 0.0, 50.0, 0.5, step=0.1, key=f"h_tol_{obj_i}_{mode_choice}_c",
                                         disabled=not cfg["h_en_c"])
-
         cfg["h_en_circ"] = hc4.checkbox("Kruhovitost", key=f"h_en_{obj_i}_{mode_choice}_circ")
         cfg["h_min_circ"] = hc5.number_input("Min. [%]", 0.0, 100.0, 85.0, step=1.0,
                                              key=f"h_min_circ_{obj_i}_{mode_choice}", disabled=not cfg["h_en_circ"])
@@ -670,26 +702,15 @@ def render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol, 
                 "Obvod [mm]": round(cv2.arcLength(hole_cnt, True) / px_per_mm, 3)
             })
         st.dataframe(pd.DataFrame(holes_data), use_container_width=True)
-        # NOVÉ: Automatický export všech naměřených rozměrů děr do CSV
+
         for h_row in holes_data:
             otvor_nazev = h_row["Otvor"]
             for klic, hodnota in h_row.items():
-                if klic == "Otvor":
-                    continue
-
-                jednotka = ""
-                if "[mm]" in klic:
-                    jednotka = "mm"
-                elif "[%]" in klic:
-                    jednotka = "%"
-
+                if klic == "Otvor": continue
+                jednotka = "mm" if "[mm]" in klic else "%" if "[%]" in klic else ""
                 export_data_list.append({
                     "Veličina": f"Díra {otvor_nazev}: {klic.split(' [')[0]}",
-                    "Naměřeno": hodnota,
-                    "Minimum": None,
-                    "Maximum": None,
-                    "Jednotka": jednotka,
-                    "Výsledek": "Info"
+                    "Naměřeno": hodnota, "Minimum": None, "Maximum": None, "Jednotka": jednotka, "Výsledek": "Info"
                 })
 
         st.markdown("---")
@@ -704,30 +725,64 @@ def render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol, 
         st.markdown(f"*Detekováno {n_h_edges} hran u Otvoru #{sel_h_idx + 1}. Čísla hran viz náhled.*")
 
         if n_h_edges >= 2:
-            h_preview = draw_edge_map(base_img.copy(), sel_h_edges, {}, raw_cnt=sel_h_cnt)
             hx, hy, hw, hh = cv2.boundingRect(sel_h_cnt)
-            pad = 30
+
+            pad = max(10, int(0.15 * max(hw, hh)))
             y1, y2 = max(0, hy - pad), min(base_img.shape[0], hy + hh + pad)
             x1, x2 = max(0, hx - pad), min(base_img.shape[1], hx + hw + pad)
-            h_cropped = h_preview[y1:y2, x1:x2]
+
+            h_cropped_base = base_img[y1:y2, x1:x2].copy()
+
+            # OPRAVA MALÉHO VÝŘEZU: Místo toho, aby program kreslil blechy na malý
+            # obrázek, který se pak rozmaže, obrázek si nejprve zvětší na 800px!
+            crop_h, crop_w = h_cropped_base.shape[:2]
+            target_dim = 800.0
+            resize_ratio = target_dim / max(crop_w, crop_h)
+
+            if resize_ratio > 1.0:
+                h_cropped_base = cv2.resize(h_cropped_base, (int(crop_w * resize_ratio), int(crop_h * resize_ratio)),
+                                            interpolation=cv2.INTER_CUBIC)
+            else:
+                resize_ratio = 1.0
+
+            shifted_edges = []
+            for e in sel_h_edges:
+                shifted_edges.append({
+                    "p1": (e["p1"] - np.array([x1, y1])) * resize_ratio,
+                    "p2": (e["p2"] - np.array([x1, y1])) * resize_ratio,
+                    "mid": (e["mid"] - np.array([x1, y1])) * resize_ratio,
+                    "angle": e["angle"],
+                    "length": e["length"]
+                })
+            shifted_cnt = (sel_h_cnt - np.array([[[x1, y1]]])) * resize_ratio
+            shifted_cnt = np.round(shifted_cnt).astype(np.int32)
+
+            # Protože je obrázek nyní velký (min 800px), bubliny a fonty budou dokonalé
+            h_cropped = draw_edge_map(h_cropped_base, shifted_edges, {}, raw_cnt=shifted_cnt)
 
             hc_1, hc_2, hc_3 = st.columns([1, 1, 1])
             with hc_2:
-                st.image(cv_to_pil(h_cropped), caption=f"Detail hran Otvoru #{sel_h_idx + 1}", use_container_width=True)
+                if h_cropped.size > 0:
+                    st.image(cv_to_pil(h_cropped), caption=f"Detail hran Otvoru #{sel_h_idx + 1}",
+                             use_container_width=True)
 
             h_nums = list(range(1, n_h_edges + 1))
 
             def h_edge_label(i):
+                if i - 1 < 0 or i - 1 >= len(sel_h_edges): return f"h{i}"
                 e = sel_h_edges[i - 1]
                 return f"h{i} ({e['length'] / px_per_mm:.1f} mm, {e['angle']:.1f}°)"
+
+            idx_a = 0
+            idx_b = min(1, n_h_edges - 1)
 
             with st.container():
                 st.markdown("**Rovnoběžnost uvnitř otvoru**")
                 hpc = st.columns([1, 1, 1, 1])
                 cfg["h_par_en"] = hpc[0].checkbox("Aktivní", key=f"h_par_en_{obj_i}")
-                cfg["h_par_a"] = hpc[1].selectbox("Hrana A", h_nums, 0, key=f"h_par_a_{obj_i}",
+                cfg["h_par_a"] = hpc[1].selectbox("Hrana A", h_nums, idx_a, key=f"h_par_a_{obj_i}",
                                                   disabled=not cfg["h_par_en"], format_func=h_edge_label) - 1
-                cfg["h_par_b"] = hpc[2].selectbox("Hrana B", h_nums, min(1, n_h_edges - 1), key=f"h_par_b_{obj_i}",
+                cfg["h_par_b"] = hpc[2].selectbox("Hrana B", h_nums, idx_b, key=f"h_par_b_{obj_i}",
                                                   disabled=not cfg["h_par_en"], format_func=h_edge_label) - 1
                 cfg["h_par_tol"] = hpc[3].number_input("Max. odchylka [°]", 0.0, 90.0, 2.0, step=0.5,
                                                        key=f"h_par_tol_{obj_i}", disabled=not cfg["h_par_en"])
@@ -746,9 +801,9 @@ def render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol, 
                 st.markdown("**Kolmost uvnitř otvoru**")
                 hqc = st.columns([1, 1, 1, 1])
                 cfg["h_perp_en"] = hqc[0].checkbox("Aktivní", key=f"h_perp_en_{obj_i}")
-                cfg["h_perp_a"] = hqc[1].selectbox("Hrana A ", h_nums, 0, key=f"h_perp_a_{obj_i}",
+                cfg["h_perp_a"] = hqc[1].selectbox("Hrana A ", h_nums, idx_a, key=f"h_perp_a_{obj_i}",
                                                    disabled=not cfg["h_perp_en"], format_func=h_edge_label) - 1
-                cfg["h_perp_b"] = hqc[2].selectbox("Hrana B ", h_nums, min(1, n_h_edges - 1), key=f"h_perp_b_{obj_i}",
+                cfg["h_perp_b"] = hqc[2].selectbox("Hrana B ", h_nums, idx_b, key=f"h_perp_b_{obj_i}",
                                                    disabled=not cfg["h_perp_en"], format_func=h_edge_label) - 1
                 cfg["h_perp_tol"] = hqc[3].number_input("Max. odch. od 90° [°]", 0.0, 45.0, 2.0, step=0.5,
                                                         key=f"h_perp_tol_{obj_i}", disabled=not cfg["h_perp_en"])
@@ -767,9 +822,9 @@ def render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol, 
                 st.markdown("**Libovolný úhel uvnitř otvoru**")
                 hac = st.columns([1, 1, 1, 1, 1])
                 cfg["h_ang_en"] = hac[0].checkbox("Aktivní", key=f"h_ang_en_{obj_i}")
-                cfg["h_ang_a"] = hac[1].selectbox("Hrana A  ", h_nums, 0, key=f"h_ang_a_{obj_i}",
+                cfg["h_ang_a"] = hac[1].selectbox("Hrana A  ", h_nums, idx_a, key=f"h_ang_a_{obj_i}",
                                                   disabled=not cfg["h_ang_en"], format_func=h_edge_label) - 1
-                cfg["h_ang_b"] = hac[2].selectbox("Hrana B  ", h_nums, min(1, n_h_edges - 1), key=f"h_ang_b_{obj_i}",
+                cfg["h_ang_b"] = hac[2].selectbox("Hrana B  ", h_nums, idx_b, key=f"h_ang_b_{obj_i}",
                                                   disabled=not cfg["h_ang_en"], format_func=h_edge_label) - 1
                 cfg["h_ang_nom"] = hac[3].number_input("Jmen. [°]", 0.0, 90.0, 45.0, step=0.5, key=f"h_ang_nom_{obj_i}",
                                                        disabled=not cfg["h_ang_en"])
@@ -779,8 +834,7 @@ def render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol, 
                 if cfg["h_ang_en"]:
                     ia, ib = cfg["h_ang_a"], cfg["h_ang_b"]
                     act_ang = angle_between_edges(sel_h_edges, ia, ib)
-                    lo = cfg["h_ang_nom"] - cfg["h_ang_tol"]
-                    hi = cfg["h_ang_nom"] + cfg["h_ang_tol"]
+                    lo, hi = cfg["h_ang_nom"] - cfg["h_ang_tol"], cfg["h_ang_nom"] + cfg["h_ang_tol"]
                     ok = lo <= act_ang <= hi
                     if not ok: is_holes_nok = True
                     r_md, r_data = tol_row(f"Otvor #{sel_h_idx + 1} Úhel (h{ia + 1}|h{ib + 1})", act_ang, lo, hi, "°")
@@ -802,27 +856,26 @@ def render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol, 
 
                 if cfg["h_len_en"]:
                     ie = cfg["h_len_edge"]
-                    elen = sel_h_edges[ie]["length"] / px_per_mm
-                    lo = cfg["h_len_nom"] - cfg["h_len_minus"]
-                    hi = cfg["h_len_nom"] + cfg["h_len_plus"]
-                    ok = lo <= elen <= hi
-                    if not ok: is_holes_nok = True
-                    r_md, r_data = tol_row(f"Otvor #{sel_h_idx + 1} Délka hrany h{ie + 1}", elen, lo, hi, "mm")
-                    rows_html_holes.append(r_md)
-                    export_data_list.append(r_data)
+                    if ie < len(sel_h_edges):
+                        elen = sel_h_edges[ie]["length"] / px_per_mm
+                        lo, hi = cfg["h_len_nom"] - cfg["h_len_minus"], cfg["h_len_nom"] + cfg["h_len_plus"]
+                        ok = lo <= elen <= hi
+                        if not ok: is_holes_nok = True
+                        r_md, r_data = tol_row(f"Otvor #{sel_h_idx + 1} Délka hrany h{ie + 1}", elen, lo, hi, "mm")
+                        rows_html_holes.append(r_md)
+                        export_data_list.append(r_data)
 
     if rows_html_holes:
         st.markdown("---")
         st.markdown("**Výsledky tolerance otvorů**")
-        for r in rows_html_holes:
-            st.markdown(r)
+        for r in rows_html_holes: st.markdown(r)
 
     return is_holes_nok, export_data_list
 
 
 # ─── UI ───────────────────────────────────────────────────────────────────────
 st.title("Rozměrová detekce")
-st.markdown("Interaktivní analýza rozměrů a geometrických tolerancí")
+st.markdown("Interaktivní analýza rozměrů a geometrických tolerancí s adaptivním měřítkem")
 st.markdown("---")
 
 # ─── Sidebar ──────────────────────────────────────────────────────────────────
@@ -832,13 +885,10 @@ with st.sidebar:
 
     with st.expander("Kalibrace", expanded=True):
         st.caption("Nastavení px/mm a šachovnice")
-        calib_file = st.file_uploader("Šachovnicový snímek",
-                                      type=["jpg", "jpeg", "png", "bmp"], key="calib")
+        calib_file = st.file_uploader("Šachovnicový snímek", type=["jpg", "jpeg", "png", "bmp"], key="calib")
         c1, c2 = st.columns(2)
-        with c1:
-            cb_rows = st.number_input("Řádky rohů", 3, 40, 23)
-        with c2:
-            cb_cols = st.number_input("Sloupce rohů", 3, 50, 32)
+        with c1: cb_rows = st.number_input("Řádky rohů", 3, 40, 23)
+        with c2: cb_cols = st.number_input("Sloupce rohů", 3, 50, 32)
         sq_mm = st.number_input("Čtverec [mm]", 0.1, 100.0, 5.0, step=0.1)
 
     with st.expander("Ruční px/mm", expanded=False):
@@ -852,48 +902,41 @@ with st.sidebar:
         st.markdown("---")
         canny_low = st.slider("Canny spodní", 0, 200, 50)
         canny_high = st.slider("Canny horní", 50, 500, 150)
-        min_area = st.slider("Min. plocha [px]", 50, 5000, 500)
-        max_obj = st.slider("Max. objektů (0=vše)", 0, 20, 1)
+        min_area = st.slider("Min. plocha [px]", 50, 50000, 5000)
+        min_hole_area = st.slider("Min. plocha díry [px]", 10, 5000, 500)
+        max_obj = st.slider("Max. objektů (0=vše)", 0, 20, 0)
         merge = st.toggle("Slučovat kontury", value=False)
         merge_dist = st.slider("Vzdálenost slučování [px]", 5, 100, 40, disabled=not merge)
         detect_holes = st.toggle("Detekovat vnitřní díry (otvory)", value=True)
 
     with st.expander("Detekce hran", expanded=False):
         st.caption("Parametry rozpoznání hran polygonu")
-        angle_merge_tol = st.slider(
-            "Tolerance úhlu pro slučování hran [°]", 1, 20, 6,
-            help="Hrany jejichž úhel se liší méně než tato hodnota budou sloučeny."
-        )
+        angle_merge_tol = st.slider("Tolerance úhlu pro slučování hran [°]", 1, 20, 6)
 
 # ─── Calibration ──────────────────────────────────────────────────────────────
 cam_mtx, dist_c, px_per_mm = None, None, None
 
 if calib_file:
     with st.spinner("Probíhá kalibrace..."):
-        cam_mtx, dist_c, px_per_mm_cal, debug_img, err = calibrate(
-            calib_file.read(), cb_rows, cb_cols, sq_mm)
+        calib_file.seek(0)
+        cam_mtx, dist_c, px_per_mm_cal, debug_img, err = calibrate(calib_file.read(), cb_rows, cb_cols, sq_mm)
     if err:
         st.error(err)
     else:
         px_per_mm = px_per_mm_cal
         st.success(f"Kalibrace úspěšná — {px_per_mm:.4f} px/mm")
         with st.expander("Kalibrační snímek", expanded=False):
-            st.image(cv_to_pil(debug_img), use_container_width=True)
+            if debug_img is not None: st.image(cv_to_pil(debug_img), use_container_width=True)
 
 if manual_ppm and manual_ppm > 0:
     px_per_mm = manual_ppm
-    st.markdown(
-        f'<div class="info-box">Ruční px/mm aktivní: {px_per_mm:.4f}</div>',
-        unsafe_allow_html=True
-    )
+    st.markdown(f'<div class="info-box">Ruční px/mm aktivní: {px_per_mm:.4f}</div>', unsafe_allow_html=True)
 
 if not px_per_mm:
     px_per_mm = 5.0
     if not calib_file:
-        st.markdown(
-            '<div class="info-box">Nahrajte šachovnici nebo zadejte vlastní px/mm. Výchozí: 5.0 px/mm</div>',
-            unsafe_allow_html=True
-        )
+        st.markdown('<div class="info-box">Nahrajte šachovnici nebo zadejte vlastní px/mm. Výchozí: 5.0 px/mm</div>',
+                    unsafe_allow_html=True)
 
 # ─── Object upload ────────────────────────────────────────────────────────────
 obj_file = st.file_uploader("Snímek měřeného objektu", type=["jpg", "jpeg", "png", "bmp"])
@@ -902,21 +945,20 @@ if not obj_file:
     st.info("Nahrajte snímek objektu ke zpracování.")
     st.stop()
 
+obj_file.seek(0)
 img_bytes = obj_file.read()
 orig_pil = Image.open(io.BytesIO(img_bytes))
 
 # ─── Detect ───────────────────────────────────────────────────────────────────
 with st.spinner("Detekuji objekty..."):
     img_out_bytes, edge_vis_bytes, parts_s = detect_objects(
-        img_bytes, cam_mtx, dist_c,
-        canny_low, canny_high, min_area, max_obj, merge, merge_dist, detect_holes,
-        det_method, invert_thresh)
+        img_bytes, cam_mtx, dist_c, canny_low, canny_high, min_area, max_obj, merge, merge_dist, detect_holes,
+        det_method, invert_thresh, min_hole_area)
 
 base_arr = np.frombuffer(img_out_bytes, np.uint8)
 edge_arr = np.frombuffer(edge_vis_bytes, np.uint8)
 base_img = cv2.imdecode(base_arr, cv2.IMREAD_COLOR)
 edge_img = cv2.imdecode(edge_arr, cv2.IMREAD_COLOR)
-
 parts = deserialize_parts(parts_s)
 
 col_a, col_b = st.columns(2)
@@ -925,7 +967,7 @@ with col_a:
     st.image(orig_pil, use_container_width=True)
 with col_b:
     st.markdown("**Segmentační mapa**")
-    st.image(cv_to_pil(edge_img), use_container_width=True)
+    if edge_img is not None: st.image(cv_to_pil(edge_img), use_container_width=True)
 
 if not parts:
     st.warning("Žádné objekty nebyly nalezeny. Zkuste upravit segmentaci nebo min. plochu v postranním panelu.")
@@ -935,31 +977,26 @@ st.markdown("---")
 st.markdown(f"**Nalezeno:** {len(parts)} hlavních objektů")
 
 HCOLORS = {
-    "par_a": (0, 158, 230),
-    "par_b": (0, 94, 213),
-    "perp_a": (0, 158, 115),
-    "perp_b": (167, 121, 204),
-    "len_e": (0, 114, 178),
-    "ang_a": (230, 158, 0),
-    "ang_b": (213, 94, 0),
-    "straight": (0, 0, 255),
+    "par_a": (0, 158, 230), "par_b": (0, 94, 213), "perp_a": (0, 158, 115), "perp_b": (167, 121, 204),
+    "len_e": (0, 114, 178), "ang_a": (230, 158, 0), "ang_b": (213, 94, 0), "straight": (0, 0, 255),
 }
 
 # ─── Per-object tabs ──────────────────────────────────────────────────────────
 for obj_i, part in enumerate(parts):
     cnt = part["outer"]
     holes = part["holes"]
-    n_holes = len(holes)
+    if cnt is None or cnt.size < 6: continue
 
     area_px = cv2.contourArea(cnt)
     x, y, bw, bh = cv2.boundingRect(cnt)
+    if area_px == 0 or bw == 0 or bh == 0: continue
+
     rect = cv2.minAreaRect(cnt)
     (cx_r, cy_r), (rw_px, rh_px), angle = rect
+    if px_per_mm == 0: px_per_mm = 1.0
+
     rw_mm = max(rw_px, rh_px) / px_per_mm
     rh_mm = min(rw_px, rh_px) / px_per_mm
-    area_mm2 = area_px / (px_per_mm ** 2)
-    peri_mm = cv2.arcLength(cnt, True) / px_per_mm
-    circ = circularity_pct(cnt)
     shape = classify_shape(cnt)
     edges = get_edges(cnt, angle_merge_tol=angle_merge_tol)
     n_edges = len(edges)
@@ -967,19 +1004,13 @@ for obj_i, part in enumerate(parts):
     shape_labels = {"circle": "Kruh", "ellipse": "Elipsa / Ovál", "polygon": "Polygon"}
 
     with st.expander(
-            f"Objekt #{obj_i + 1}  —  {rw_mm:.1f} × {rh_mm:.1f} mm  |  detekce: {shape_labels[shape]}",
-            expanded=True,
-    ):
-        st.markdown("**Typ hlavního objektu**")
+            f"Objekt #{obj_i + 1}  —  {rw_mm:.1f} × {rh_mm:.1f} mm  |  detekce: {shape_labels.get(shape, 'Neznámý')}",
+            expanded=True):
         mode_choice = st.segmented_control(
-            label="",
-            label_visibility="collapsed",
-            options=["polygon", "circle"],
+            label="", label_visibility="collapsed", options=["polygon", "circle"],
             default="polygon" if shape == "polygon" else "circle",
-            format_func=lambda x: {
-                "polygon": "Polygon — výběr hran, rovnoběžnost, kolmost, úhly",
-                "circle": "Kruh — průměr, radiální odchylka, kruhovitost",
-            }[x],
+            format_func=lambda x: {"polygon": "Polygon — výběr hran, rovnoběžnost, kolmost, úhly",
+                                   "circle": "Kruh — průměr, radiální odchylka, kruhovitost"}[x],
             key=f"mode_{obj_i}"
         )
 
@@ -991,203 +1022,152 @@ for obj_i, part in enumerate(parts):
             export_data_list = []
             rows_html_main = []
 
-            st.markdown("**Přesné kruhové metriky**")
-            st.markdown(
-                '<div class="info-box">Hodnoty jsou počítány přímo z raw kontury. Fitovaný kruh = metoda nejmenších čtverců. Radiální odchylka = rozdíl max a min poloměru od středu.</div>',
-                unsafe_allow_html=True
-            )
-
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Průměr (fit)", f"{cm['r_fit_mm'] * 2:.3f} mm")
             m2.metric("R max", f"{cm['r_max_mm']:.3f} mm")
             m3.metric("R min", f"{cm['r_min_mm']:.3f} mm")
             m4.metric("Radiální odchylka", f"{cm['dev_mm']:.3f} mm")
 
-            st.markdown("**Vizualizace — fitovaný kruh**")
             circ_vis = draw_circle_overlay(base_img, cm, px_per_mm)
-            cv2.drawContours(circ_vis, [cnt], 0, (180, 180, 180), 1, cv2.LINE_AA)
-            if holes:
-                draw_holes_with_labels(circ_vis, holes)
+            th_cnt = max(1, int(1 * get_drawing_scale(base_img.shape[0], base_img.shape[1])))
+            cv2.drawContours(circ_vis, [cnt], 0, (180, 180, 180), th_cnt, cv2.LINE_AA)
+            if holes: draw_holes_with_labels(circ_vis, holes)
 
             c_v1, c_v2, c_v3 = st.columns([1, 1, 1])
             with c_v2:
-                st.image(cv_to_pil(circ_vis), use_container_width=True)
+                if circ_vis is not None: st.image(cv_to_pil(circ_vis), use_container_width=True)
 
             st.markdown("---")
-
             with st.expander("Radiální profil (úhel → poloměr)"):
-                profile = cm["profile"]
-                if profile:
-                    step = max(1, len(profile) // 72)
-                    sampled = profile[::step]
-                    r_fit = cm["r_fit_mm"]
+                if cm["profile"]:
+                    step = max(1, len(cm["profile"]) // 72)
                     rows_p = []
-                    for ang, r in sampled:
-                        dev_r = r - r_fit
-                        bar_len = int(abs(dev_r) / cm["dev_mm"] * 20) if cm["dev_mm"] > 0 else 0
-                        bar_len = min(bar_len, 20)
-                        bar = ("+" if dev_r >= 0 else "-") * bar_len
-                        rows_p.append(
-                            f"| {ang:+.0f}° | {r:.3f} | {bar} | {dev_r:+.3f} mm |"
-                        )
+                    for ang, r in cm["profile"][::step]:
+                        dev_r = r - cm["r_fit_mm"]
+                        bar = ("+" if dev_r >= 0 else "-") * min(
+                            int(abs(dev_r) / (cm["dev_mm"] if cm["dev_mm"] > 0 else 1.0) * 20), 20)
+                        rows_p.append(f"| {ang:+.0f}° | {r:.3f} | {bar} | {dev_r:+.3f} mm |")
                     st.markdown("| Úhel | R [mm] | Odchylka | Δ [mm] |\n|---|---|---|---|\n" + "\n".join(rows_p))
 
             st.markdown("---")
             st.markdown("**Tolerance kruhu**")
             cfg = {}
             tc1, tc2, tc3 = st.columns(3)
+            circ = circularity_pct(cnt)
 
             with tc1:
-                st.markdown("**Kruhovitost**")
-                cfg["circ_en"] = st.checkbox("Aktivní", value=True, key=f"circ_en_{obj_i}")
-                cfg["circ_min"] = st.number_input("Min. [%]", 0.0, 100.0, 85.0, step=1.0,
-                                                  key=f"circ_min_{obj_i}",
+                cfg["circ_en"] = st.checkbox("Kruhovitost", value=True, key=f"circ_en_{obj_i}")
+                cfg["circ_min"] = st.number_input("Min. [%]", 0.0, 100.0, 85.0, step=1.0, key=f"circ_min_{obj_i}",
                                                   disabled=not cfg["circ_en"])
                 if cfg["circ_en"]:
                     ok = circ >= cfg["circ_min"]
                     if not ok: is_nok = True
                     r_md, r_data = tol_row("Kruhovitost", circ, cfg["circ_min"], 100.0, "%")
-                    rows_html_main.append(r_md)
+                    rows_html_main.append(r_md);
                     export_data_list.append(r_data)
 
             with tc2:
-                st.markdown("**Průměr**")
-                cfg["diam_en"] = st.checkbox("Aktivní", value=True, key=f"diam_en_{obj_i}_diam")
-                cfg["diam_nom"] = st.number_input("Jmenovitý průměr [mm]", 0.0, 2000.0,
-                                                  round(cm["r_fit_mm"] * 2, 2), step=0.1,
-                                                  key=f"diam_nom_{obj_i}",
-                                                  disabled=not cfg["diam_en"])
-                cfg["diam_plus"] = st.number_input("Tol. + [mm]", 0.0, 100.0, 0.5, step=0.05,
-                                                   key=f"diam_plus_{obj_i}",
+                cfg["diam_en"] = st.checkbox("Průměr", value=True, key=f"diam_en_{obj_i}_diam")
+
+                d_fit = round(cm["r_fit_mm"] * 2, 2)
+                max_diam_limit = float(max(2000.0, d_fit * 2.0))
+
+                cfg["diam_nom"] = st.number_input("Jmenovitý [mm]", 0.0, max_diam_limit, d_fit, step=0.1,
+                                                  key=f"diam_nom_{obj_i}", disabled=not cfg["diam_en"])
+                cfg["diam_plus"] = st.number_input("Tol. +", 0.0, 100.0, 0.5, step=0.05, key=f"diam_plus_{obj_i}",
                                                    disabled=not cfg["diam_en"])
-                cfg["diam_minus"] = st.number_input("Tol. − [mm]", 0.0, 100.0, 0.5, step=0.05,
-                                                    key=f"diam_minus_{obj_i}",
+                cfg["diam_minus"] = st.number_input("Tol. −", 0.0, 100.0, 0.5, step=0.05, key=f"diam_minus_{obj_i}",
                                                     disabled=not cfg["diam_en"])
                 if cfg["diam_en"]:
-                    d_fit = cm["r_fit_mm"] * 2
-                    lo = cfg["diam_nom"] - cfg["diam_minus"]
-                    hi = cfg["diam_nom"] + cfg["diam_plus"]
+                    lo, hi = cfg["diam_nom"] - cfg["diam_minus"], cfg["diam_nom"] + cfg["diam_plus"]
                     ok = lo <= d_fit <= hi
                     if not ok: is_nok = True
                     r_md, r_data = tol_row("Průměr", d_fit, lo, hi, "mm")
-                    rows_html_main.append(r_md)
+                    rows_html_main.append(r_md);
                     export_data_list.append(r_data)
 
             with tc3:
-                st.markdown("**Radiální odchylka**")
-                cfg["rad_en"] = st.checkbox("Aktivní", value=True, key=f"rad_en_{obj_i}_rad")
+                cfg["rad_en"] = st.checkbox("Radiální odchylka", value=True, key=f"rad_en_{obj_i}_rad")
+
                 _rad_default = round(cm["dev_mm"] * 1.5 + 0.1, 2)
-                _rad_max_limit = max(100.0, _rad_default * 2)
-                cfg["rad_max"] = st.number_input("Max. odchylka [mm]", 0.0, _rad_max_limit,
-                                                 _rad_default, step=0.05,
-                                                 key=f"rad_max_{obj_i}",
-                                                 disabled=not cfg["rad_en"])
+                _rad_max_limit = float(max(100.0, _rad_default * 2.0))
+
+                cfg["rad_max"] = st.number_input("Max. [mm]", 0.0, _rad_max_limit, _rad_default, step=0.05,
+                                                 key=f"rad_max_{obj_i}", disabled=not cfg["rad_en"])
                 if cfg["rad_en"]:
                     ok = cm["dev_mm"] <= cfg["rad_max"]
                     if not ok: is_nok = True
                     r_md, r_data = tol_row("Radiální odchylka", cm["dev_mm"], 0.0, cfg["rad_max"], "mm")
-                    rows_html_main.append(r_md)
+                    rows_html_main.append(r_md);
                     export_data_list.append(r_data)
 
             if rows_html_main:
                 st.markdown("---")
-                st.markdown("**Výsledky tolerance hlavního tvaru**")
-                for r in rows_html_main:
-                    st.markdown(r)
+                for r in rows_html_main: st.markdown(r)
 
             is_holes_nok, export_data_list = render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol,
                                                                   base_img, export_data_list)
             if is_holes_nok: is_nok = True
 
             st.markdown("---")
-            st.markdown("**Výsledky tolerance celého objektu**")
             if is_nok:
-                st.error(f"MIMO TOLERANCI | Alespoň jedna kontrola hlavního tvaru nebo děr byla mimo toleranci.")
+                st.error("MIMO TOLERANCI | Alespoň jedna kontrola byla mimo toleranci.")
             else:
-                st.success(f"V TOLERANCI | Všechny provedené kontroly hlavního tvaru a děr jsou v tolerancích.")
+                st.success("V TOLERANCI | Všechny provedené kontroly jsou v tolerancích.")
 
             df_export = pd.DataFrame(export_data_list)
-            csv_data = df_export.to_csv(index=False).encode('utf-8-sig')
-
             img_buf = io.BytesIO()
-            cv_to_pil(circ_vis).save(img_buf, format="PNG")
+            (cv_to_pil(circ_vis) if circ_vis is not None else orig_pil).save(img_buf, format="PNG")
 
             dl_col1, dl_col2 = st.columns(2)
             with dl_col1:
-                st.download_button(f"Stáhnout snímek (Objekt #{obj_i + 1})",
-                                   data=img_buf.getvalue(),
-                                   file_name=f"viziometer_obj{obj_i + 1}.png",
-                                   mime="image/png", key=f"img_dl_{obj_i}", use_container_width=True)
+                st.download_button(f"Stáhnout snímek", data=img_buf.getvalue(), file_name=f"obj{obj_i + 1}.png",
+                                   mime="image/png", use_container_width=True)
             with dl_col2:
-                st.download_button(f"Stáhnout tabulku s daty (CSV)",
-                                   data=csv_data,
-                                   file_name=f"viziometer_obj{obj_i + 1}_data.csv",
-                                   mime="text/csv", key=f"csv_dl_{obj_i}", use_container_width=True)
+                st.download_button(f"Stáhnout CSV", data=df_export.to_csv(index=False).encode('utf-8-sig'),
+                                   file_name=f"obj{obj_i + 1}_data.csv", mime="text/csv", use_container_width=True)
 
         else:  # polygon mode
             is_nok = False
             highlights = {}
-            highlight_conflicts = set()
 
 
             def assign_highlight(idx, color):
-                if idx in highlights and highlights[idx] != color:
-                    highlight_conflicts.add(idx)
                 highlights[idx] = color
 
 
-            PALETTE = [
-                (0, 158, 230), (0, 114, 178), (0, 158, 115),
-                (10, 194, 213), (0, 94, 213), (167, 121, 204), (0, 0, 0)
-            ]
+            PALETTE = [(0, 158, 230), (0, 114, 178), (0, 158, 115), (10, 194, 213), (0, 94, 213), (167, 121, 204),
+                       (0, 0, 0)]
+            export_data_list, rows_html_main = [], []
 
-            export_data_list = []
-            rows_html_main = []
-
-            # Zpracování odchylky přímosti
             edges = analyze_edge_straightness(cnt, edges, px_per_mm)
 
             st.markdown("**Vizualizace nalezených hran**")
-            st.markdown(
-                f'<div class="info-box">Detekováno hran: {n_edges}. Čísla hran viz náhled.*',
-                unsafe_allow_html=True
-            )
-
             preview_highlights = {i: PALETTE[i % len(PALETTE)] for i in range(n_edges)}
             edge_preview = draw_edge_map(base_img, edges, preview_highlights, raw_cnt=cnt)
-            cv2.rectangle(edge_preview, (x, y), (x + bw, y + bh), (150, 150, 150), 1)
-            if holes:
-                draw_holes_with_labels(edge_preview, holes)
+            th_rect = max(1, int(1 * get_drawing_scale(base_img.shape[0], base_img.shape[1])))
+            cv2.rectangle(edge_preview, (x, y), (x + bw, y + bh), (150, 150, 150), th_rect)
+            if holes: draw_holes_with_labels(edge_preview, holes)
 
-            preview_legend = [
-                (PALETTE[i % len(PALETTE)],
-                 f"H{i + 1}  {edges[i]['length'] / px_per_mm:.1f} mm  {edges[i]['angle']:.1f} deg")
-                for i in range(n_edges)
-            ]
-            edge_preview = draw_legend_pil(edge_preview, preview_legend)
+            preview_legend = [(PALETTE[i % len(PALETTE)],
+                               f"H{i + 1}  {edges[i]['length'] / px_per_mm:.1f} mm  {edges[i]['angle']:.1f} deg") for i
+                              in range(n_edges)]
+            edge_preview_annotated = draw_legend_cv(edge_preview, preview_legend)
 
             c_p1, c_p2, c_p3 = st.columns([1, 1, 1])
             with c_p2:
-                st.image(cv_to_pil(edge_preview), use_container_width=True)
+                if edge_preview_annotated is not None: st.image(cv_to_pil(edge_preview_annotated),
+                                                                use_container_width=True)
 
-            st.markdown("**Seznam všech hran**")
             edges_df_data = []
             for i, e in enumerate(edges):
                 length_mm = e['length'] / px_per_mm
-                edges_df_data.append({
-                    "Hrana": f"H{i + 1}",
-                    "Délka [mm]": round(length_mm, 3),
-                    "Úhel [°]": round(e['angle'], 1),
-                    "Max. odchylka přímosti [mm]": round(e['dev_max_mm'], 3)
-                })
-                export_data_list.append({
-                    "Veličina": f"Délka hrany H{i + 1}",
-                    "Naměřeno": round(length_mm, 3),
-                    "Minimum": None,
-                    "Maximum": None,
-                    "Jednotka": "mm",
-                    "Výsledek": "Info"
-                })
+                edges_df_data.append(
+                    {"Hrana": f"H{i + 1}", "Délka [mm]": round(length_mm, 3), "Úhel [°]": round(e['angle'], 1),
+                     "Max. odchylka přímosti [mm]": round(e['dev_max_mm'], 3)})
+                export_data_list.append(
+                    {"Veličina": f"Délka hrany H{i + 1}", "Naměřeno": round(length_mm, 3), "Minimum": None,
+                     "Maximum": None, "Jednotka": "mm", "Výsledek": "Info"})
 
             st.dataframe(pd.DataFrame(edges_df_data), use_container_width=True)
             st.markdown("---")
@@ -1197,193 +1177,125 @@ for obj_i, part in enumerate(parts):
 
 
             def edge_label(i):
+                if i - 1 < 0 or i - 1 >= len(edges): return f"H{i}"
                 e = edges[i - 1]
                 return f"H{i} ({e['length'] / px_per_mm:.1f} mm, {e['angle']:.1f}°)"
 
 
-            cfg = {}
+            cfg, idx_a, idx_b = {}, 0, min(1, n_edges - 1)
 
             with st.container():
-                st.markdown("**Rovnoběžnost dvou hran hlavního tvaru**")
                 pc = st.columns([1, 1, 1, 1])
-                cfg["par_en"] = pc[0].checkbox("Aktivní", value=True, key=f"par_en_{obj_i}")
-                cfg["par_a"] = pc[1].selectbox("Hrana A", nums, 0, key=f"par_a_{obj_i}",
-                                               disabled=not cfg["par_en"],
+                cfg["par_en"] = pc[0].checkbox("Rovnoběžnost", value=True, key=f"par_en_{obj_i}")
+                cfg["par_a"] = pc[1].selectbox("Hrana A", nums, idx_a, key=f"par_a_{obj_i}", disabled=not cfg["par_en"],
                                                format_func=edge_label) - 1
-                cfg["par_b"] = pc[2].selectbox("Hrana B", nums, min(1, n_edges - 1),
-                                               key=f"par_b_{obj_i}",
-                                               disabled=not cfg["par_en"],
+                cfg["par_b"] = pc[2].selectbox("Hrana B", nums, idx_b, key=f"par_b_{obj_i}", disabled=not cfg["par_en"],
                                                format_func=edge_label) - 1
-                cfg["par_tol"] = pc[3].number_input("Max. odchylka [°]", 0.0, 90.0, 2.0,
-                                                    step=0.5, key=f"par_tol_{obj_i}",
-                                                    disabled=not cfg["par_en"])
+                cfg["par_tol"] = pc[3].number_input("Max. odchylka [°]", 0.0, 90.0, 2.0, step=0.5,
+                                                    key=f"par_tol_{obj_i}", disabled=not cfg["par_en"])
                 if cfg["par_en"]:
                     ia, ib = cfg["par_a"], cfg["par_b"]
                     dev = parallelism_deg(edges, ia, ib)
                     ok = dev <= cfg["par_tol"]
                     if not ok: is_nok = True
-                    r_md, r_data = tol_row(f"Rovnoběžnost (odchylka) (H{ia + 1} | H{ib + 1})", dev, 0.0, cfg["par_tol"],
-                                           "°")
-                    assign_highlight(ia, HCOLORS["par_a"])
+                    r_md, r_data = tol_row(f"Rovnoběžnost (H{ia + 1} | H{ib + 1})", dev, 0.0, cfg["par_tol"], "°")
+                    assign_highlight(ia, HCOLORS["par_a"]);
                     assign_highlight(ib, HCOLORS["par_b"])
-                    rows_html_main.append(r_md)
+                    rows_html_main.append(r_md);
                     export_data_list.append(r_data)
 
             with st.container():
-                st.markdown("**Kolmost dvou hran hlavního tvaru**")
                 qc = st.columns([1, 1, 1, 1])
-                cfg["perp_en"] = qc[0].checkbox("Aktivní", value=True, key=f"perp_en_{obj_i}")
-                cfg["perp_a"] = qc[1].selectbox("Hrana A", nums, 0, key=f"perp_a_{obj_i}",
-                                                disabled=not cfg["perp_en"],
-                                                format_func=edge_label) - 1
-                cfg["perp_b"] = qc[2].selectbox("Hrana B", nums, min(1, n_edges - 1),
-                                                key=f"perp_b_{obj_i}",
-                                                disabled=not cfg["perp_en"],
-                                                format_func=edge_label) - 1
-                cfg["perp_tol"] = qc[3].number_input("Max. odch. od 90° [°]", 0.0, 45.0, 2.0,
-                                                     step=0.5, key=f"perp_tol_{obj_i}",
-                                                     disabled=not cfg["perp_en"])
+                cfg["perp_en"] = qc[0].checkbox("Kolmost", value=True, key=f"perp_en_{obj_i}")
+                cfg["perp_a"] = qc[1].selectbox("Hrana A ", nums, idx_a, key=f"perp_a_{obj_i}",
+                                                disabled=not cfg["perp_en"], format_func=edge_label) - 1
+                cfg["perp_b"] = qc[2].selectbox("Hrana B ", nums, idx_b, key=f"perp_b_{obj_i}",
+                                                disabled=not cfg["perp_en"], format_func=edge_label) - 1
+                cfg["perp_tol"] = qc[3].number_input("Max. odch. od 90° [°]", 0.0, 45.0, 2.0, step=0.5,
+                                                     key=f"perp_tol_{obj_i}", disabled=not cfg["perp_en"])
                 if cfg["perp_en"]:
                     ia, ib = cfg["perp_a"], cfg["perp_b"]
                     dev = perpendicularity_deg(edges, ia, ib)
                     ok = dev <= cfg["perp_tol"]
                     if not ok: is_nok = True
-                    r_md, r_data = tol_row(f"Kolmost (odchylka)(H{ia + 1} | H{ib + 1})", dev, 0.0, cfg["perp_tol"], "°")
-                    assign_highlight(ia, HCOLORS["perp_a"])
+                    r_md, r_data = tol_row(f"Kolmost (H{ia + 1} | H{ib + 1})", dev, 0.0, cfg["perp_tol"], "°")
+                    assign_highlight(ia, HCOLORS["perp_a"]);
                     assign_highlight(ib, HCOLORS["perp_b"])
-                    rows_html_main.append(r_md)
+                    rows_html_main.append(r_md);
                     export_data_list.append(r_data)
 
             with st.container():
-                st.markdown("**Libovolný úhel dvou hran hlavního tvaru**")
                 ac = st.columns([1, 1, 1, 1, 1])
-                cfg["ang_en"] = ac[0].checkbox("Aktivní", value=False, key=f"ang_en_{obj_i}")
-                cfg["ang_a"] = ac[1].selectbox("Hrana A ", nums, 0, key=f"ang_a_{obj_i}",
-                                               disabled=not cfg["ang_en"],
-                                               format_func=edge_label) - 1
-                cfg["ang_b"] = ac[2].selectbox("Hrana B ", nums, min(1, n_edges - 1),
-                                               key=f"ang_b_{obj_i}",
-                                               disabled=not cfg["ang_en"],
-                                               format_func=edge_label) - 1
-                cfg["ang_nom"] = ac[3].number_input("Jmenovitý úhel [°] (0-90)", 0.0, 90.0, 45.0,
-                                                    step=0.5, key=f"ang_nom_{obj_i}",
+                cfg["ang_en"] = ac[0].checkbox("Libovolný úhel", value=False, key=f"ang_en_{obj_i}")
+                cfg["ang_a"] = ac[1].selectbox("Hrana A  ", nums, idx_a, key=f"ang_a_{obj_i}",
+                                               disabled=not cfg["ang_en"], format_func=edge_label) - 1
+                cfg["ang_b"] = ac[2].selectbox("Hrana B  ", nums, idx_b, key=f"ang_b_{obj_i}",
+                                               disabled=not cfg["ang_en"], format_func=edge_label) - 1
+                cfg["ang_nom"] = ac[3].number_input("Jmenovitý [°]", 0.0, 90.0, 45.0, step=0.5, key=f"ang_nom_{obj_i}",
                                                     disabled=not cfg["ang_en"])
-                cfg["ang_tol"] = ac[4].number_input("Max. odchylka [°] ", 0.0, 45.0, 2.0,
-                                                    step=0.5, key=f"ang_tol_{obj_i}",
+                cfg["ang_tol"] = ac[4].number_input("Odchylka [°] ", 0.0, 45.0, 2.0, step=0.5, key=f"ang_tol_{obj_i}",
                                                     disabled=not cfg["ang_en"])
                 if cfg["ang_en"]:
                     ia, ib = cfg["ang_a"], cfg["ang_b"]
                     act_ang = angle_between_edges(edges, ia, ib)
-                    lo = cfg["ang_nom"] - cfg["ang_tol"]
-                    hi = cfg["ang_nom"] + cfg["ang_tol"]
+                    lo, hi = cfg["ang_nom"] - cfg["ang_tol"], cfg["ang_nom"] + cfg["ang_tol"]
                     ok = lo <= act_ang <= hi
                     if not ok: is_nok = True
-                    r_md, r_data = tol_row(f"Úhel (H{ia + 1} | H{ib + 1})", act_ang, lo, hi, "°",
-                                           extra=f" — jmenovitý **{cfg['ang_nom']}°**")
-                    assign_highlight(ia, HCOLORS["ang_a"])
+                    r_md, r_data = tol_row(f"Úhel (H{ia + 1} | H{ib + 1})", act_ang, lo, hi, "°")
+                    assign_highlight(ia, HCOLORS["ang_a"]);
                     assign_highlight(ib, HCOLORS["ang_b"])
-                    rows_html_main.append(r_md)
+                    rows_html_main.append(r_md);
                     export_data_list.append(r_data)
 
             with st.container():
-                st.markdown("**Délka vybrané hrany hlavního tvaru**")
                 lc = st.columns([1, 1, 1, 1, 1])
-                cfg["len_en"] = lc[0].checkbox("Aktivní", value=False, key=f"len_en_{obj_i}")
+                cfg["len_en"] = lc[0].checkbox("Délka hrany", value=False, key=f"len_en_{obj_i}")
                 cfg["len_edge"] = lc[1].selectbox("Zkoumaná hrana", nums, 0, key=f"len_edge_{obj_i}",
-                                                  disabled=not cfg["len_en"],
-                                                  format_func=edge_label) - 1
-                cfg["len_nom"] = lc[2].number_input("Jmenovitá [mm]", 0.0, 2000.0, 10.0,
-                                                    step=0.5, key=f"len_nom_{obj_i}",
-                                                    disabled=not cfg["len_en"])
-                cfg["len_plus"] = lc[3].number_input("Tol. + [mm]", 0.0, 100.0, 1.0,
-                                                     step=0.1, key=f"len_plus_{obj_i}",
+                                                  disabled=not cfg["len_en"], format_func=edge_label) - 1
+
+                _len_default = 10.0
+                _len_max_limit = float(max(2000.0, _len_default * 2.0))
+
+                cfg["len_nom"] = lc[2].number_input("Jmenovitá [mm]", 0.0, _len_max_limit, _len_default, step=0.5,
+                                                    key=f"len_nom_{obj_i}", disabled=not cfg["len_en"])
+                cfg["len_plus"] = lc[3].number_input("Tol. +", 0.0, 100.0, 1.0, step=0.1, key=f"len_plus_{obj_i}",
                                                      disabled=not cfg["len_en"])
-                cfg["len_minus"] = lc[4].number_input("Tol. − [mm]", 0.0, 100.0, 1.0,
-                                                      step=0.1, key=f"len_minus_{obj_i}",
+                cfg["len_minus"] = lc[4].number_input("Tol. −", 0.0, 100.0, 1.0, step=0.1, key=f"len_minus_{obj_i}",
                                                       disabled=not cfg["len_en"])
                 if cfg["len_en"]:
                     ie = cfg["len_edge"]
                     if ie < n_edges:
                         elen = edges[ie]["length"] / px_per_mm
-                        lo = cfg["len_nom"] - cfg["len_minus"]
-                        hi = cfg["len_nom"] + cfg["len_plus"]
+                        lo, hi = cfg["len_nom"] - cfg["len_minus"], cfg["len_nom"] + cfg["len_plus"]
                         ok = lo <= elen <= hi
                         if not ok: is_nok = True
-                        r_md, r_data = tol_row(f"Tolerance délky H{ie + 1}", elen, lo, hi, "mm")
+                        r_md, r_data = tol_row(f"Délka H{ie + 1}", elen, lo, hi, "mm")
                         assign_highlight(ie, HCOLORS["len_e"])
-                        rows_html_main.append(r_md)
+                        rows_html_main.append(r_md);
                         export_data_list.append(r_data)
 
             with st.container():
-                st.markdown("**Přímost hrany (Roztřesenost)**")
                 rc = st.columns([1, 1, 1, 1, 1])
-                cfg["straight_en"] = rc[0].checkbox("Aktivní", value=False, key=f"straight_en_{obj_i}")
+                cfg["straight_en"] = rc[0].checkbox("Přímost (Roztřesenost)", value=False, key=f"straight_en_{obj_i}")
                 cfg["straight_edge"] = rc[1].selectbox("Zkoumaná hrana ", nums, 0, key=f"straight_edge_{obj_i}",
-                                                       disabled=not cfg["straight_en"],
-                                                       format_func=edge_label) - 1
-                cfg["straight_max"] = rc[2].number_input("Max. povolená odchylka [mm]", 0.0, 50.0, 0.5,
-                                                         step=0.1, key=f"straight_max_{obj_i}",
-                                                         disabled=not cfg["straight_en"])
-
+                                                       disabled=not cfg["straight_en"], format_func=edge_label) - 1
+                cfg["straight_max"] = rc[2].number_input("Max. odchylka [mm]", 0.0, 50.0, 0.5, step=0.1,
+                                                         key=f"straight_max_{obj_i}", disabled=not cfg["straight_en"])
                 if cfg["straight_en"]:
                     ie = cfg["straight_edge"]
                     if ie < n_edges:
                         dev = edges[ie]["dev_max_mm"]
                         ok = dev <= cfg["straight_max"]
                         if not ok: is_nok = True
-                        r_md, r_data = tol_row(f"Přímost (roztřesenost) H{ie + 1}", dev, 0.0, cfg["straight_max"], "mm")
+                        r_md, r_data = tol_row(f"Přímost H{ie + 1}", dev, 0.0, cfg["straight_max"], "mm")
                         assign_highlight(ie, HCOLORS["straight"])
-                        rows_html_main.append(r_md)
-                        export_data_list.append(r_data)
-
-            with st.container():
-                st.markdown("**Rozměr objektu hlavního tvaru (šířka / výška)**")
-                dc = st.columns([1, 1, 1, 1, 1, 1])
-                cfg["dim_en"] = dc[0].checkbox("Aktivní", value=True, key=f"dim_en_{obj_i}")
-                cfg["dim_axis"] = dc[1].selectbox("Osa", ["Šířka", "Výška", "Obě"], index=2,
-                                                  key=f"dim_axis_{obj_i}",
-                                                  disabled=not cfg["dim_en"])
-                cfg["dim_wnom"] = dc[2].number_input("Jmenovitá šířka [mm]", 0.0, 2000.0,
-                                                     round(rw_mm, 1), step=0.5,
-                                                     key=f"dim_wnom_{obj_i}",
-                                                     disabled=not cfg["dim_en"])
-                cfg["dim_hnom"] = dc[3].number_input("Jmenovitá výška [mm]", 0.0, 2000.0,
-                                                     round(rh_mm, 1), step=0.5,
-                                                     key=f"dim_hnom_{obj_i}",
-                                                     disabled=not cfg["dim_en"])
-                cfg["dim_plus"] = dc[4].number_input("Tol. + [mm]", 0.0, 100.0, 1.0,
-                                                     step=0.1, key=f"dim_plus_{obj_i}",
-                                                     disabled=not cfg["dim_en"])
-                cfg["dim_minus"] = dc[5].number_input("Tol. − [mm]", 0.0, 100.0, 1.0,
-                                                      step=0.1, key=f"dim_minus_{obj_i}",
-                                                      disabled=not cfg["dim_en"])
-                if cfg["dim_en"]:
-                    check_w = cfg["dim_axis"] in ("Šířka", "Obě")
-                    check_h = cfg["dim_axis"] in ("Výška", "Obě")
-                    if check_w:
-                        lo = cfg["dim_wnom"] - cfg["dim_minus"]
-                        hi = cfg["dim_wnom"] + cfg["dim_plus"]
-                        ok = lo <= rw_mm <= hi
-                        if not ok: is_nok = True
-                        r_md, r_data = tol_row("Šířka objektu", rw_mm, lo, hi, "mm")
-                        rows_html_main.append(r_md)
-                        export_data_list.append(r_data)
-                    if check_h:
-                        lo = cfg["dim_hnom"] - cfg["dim_minus"]
-                        hi = cfg["dim_hnom"] + cfg["dim_plus"]
-                        ok = lo <= rh_mm <= hi
-                        if not ok: is_nok = True
-                        r_md, r_data = tol_row("Výška objektu", rh_mm, lo, hi, "mm")
-                        rows_html_main.append(r_md)
+                        rows_html_main.append(r_md);
                         export_data_list.append(r_data)
 
             if rows_html_main:
                 st.markdown("---")
-                st.markdown("**Výsledky tolerance hlavního tvaru**")
-                for r in rows_html_main:
-                    if r: st.markdown(r)
+                for r in rows_html_main: st.markdown(r)
 
-            # Volání zobrazení a analýzy děr
             is_holes_nok, export_data_list = render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol,
                                                                   base_img, export_data_list)
             if is_holes_nok: is_nok = True
@@ -1391,75 +1303,45 @@ for obj_i, part in enumerate(parts):
             st.markdown("---")
             st.markdown("**Vizualizace vybraných hran hlavního tvaru a děr**")
             annotated = draw_edge_map(base_img, edges, highlights, raw_cnt=cnt)
-            if holes:
-                draw_holes_with_labels(annotated, holes)
+            if holes: draw_holes_with_labels(annotated, holes)
 
             legend_defs = []
             if cfg["par_en"]:
                 ia, ib = cfg["par_a"], cfg["par_b"]
-                legend_defs += [
-                    (HCOLORS["par_a"],
-                     f"H{ia + 1}  rovnobeznost A  ({edges[ia]['length'] / px_per_mm:.1f} mm, {edges[ia]['angle']:.1f} deg)"),
-                    (HCOLORS["par_b"],
-                     f"H{ib + 1}  rovnobeznost B  ({edges[ib]['length'] / px_per_mm:.1f} mm, {edges[ib]['angle']:.1f} deg)"),
-                ]
+                legend_defs += [(HCOLORS["par_a"], f"H{ia + 1} rovnobeznost"),
+                                (HCOLORS["par_b"], f"H{ib + 1} rovnobeznost")]
             if cfg["perp_en"]:
                 ia, ib = cfg["perp_a"], cfg["perp_b"]
-                legend_defs += [
-                    (HCOLORS["perp_a"],
-                     f"H{ia + 1}  kolmost A  ({edges[ia]['length'] / px_per_mm:.1f} mm, {edges[ia]['angle']:.1f} deg)"),
-                    (HCOLORS["perp_b"],
-                     f"H{ib + 1}  kolmost B  ({edges[ib]['length'] / px_per_mm:.1f} mm, {edges[ib]['angle']:.1f} deg)"),
-                ]
+                legend_defs += [(HCOLORS["perp_a"], f"H{ia + 1} kolmost"), (HCOLORS["perp_b"], f"H{ib + 1} kolmost")]
             if cfg.get("ang_en", False):
                 ia, ib = cfg["ang_a"], cfg["ang_b"]
-                legend_defs += [
-                    (HCOLORS["ang_a"],
-                     f"H{ia + 1}  uhel A  ({edges[ia]['length'] / px_per_mm:.1f} mm, {edges[ia]['angle']:.1f} deg)"),
-                    (HCOLORS["ang_b"],
-                     f"H{ib + 1}  uhel B  ({edges[ib]['length'] / px_per_mm:.1f} mm, {edges[ib]['angle']:.1f} deg)"),
-                ]
+                legend_defs += [(HCOLORS["ang_a"], f"H{ia + 1} uhel"), (HCOLORS["ang_b"], f"H{ib + 1} uhel")]
             if cfg.get("len_en", False) and cfg["len_edge"] < n_edges:
-                ie = cfg["len_edge"]
-                legend_defs.append(
-                    (HCOLORS["len_e"],
-                     f"H{ie + 1}  delka  ({edges[ie]['length'] / px_per_mm:.1f} mm, {edges[ie]['angle']:.1f} deg)")
-                )
+                legend_defs.append((HCOLORS["len_e"], f"H{cfg['len_edge'] + 1} delka"))
             if cfg.get("straight_en", False) and cfg["straight_edge"] < n_edges:
-                ie = cfg["straight_edge"]
-                legend_defs.append(
-                    (HCOLORS["straight"],
-                     f"H{ie + 1}  primost (odchylka: {edges[ie]['dev_max_mm']:.3f} mm)")
-                )
+                legend_defs.append((HCOLORS["straight"], f"H{cfg['straight_edge'] + 1} primost"))
 
-            annotated_legend = draw_legend_pil(annotated, legend_defs)
+            annotated_legend = draw_legend_cv(annotated, legend_defs)
 
             c_a1, c_a2, c_a3 = st.columns([1, 1, 1])
             with c_a2:
-                st.image(cv_to_pil(annotated_legend), use_container_width=True)
+                if annotated_legend is not None: st.image(cv_to_pil(annotated_legend), use_container_width=True)
 
             st.markdown("---")
-            st.markdown("**Výsledky tolerance celého objektu**")
             if is_nok:
-                st.error(f"MIMO TOLERANCI | Alespoň jedna z kontrol tvaru není v toleranci.")
+                st.error("MIMO TOLERANCI")
             else:
-                st.success(f"V TOLERANCI | Všechny nastavené kontroly tvaru jsou v toleranci.")
+                st.success("V TOLERANCI")
 
             df_export = pd.DataFrame(export_data_list)
-            csv_data = df_export.to_csv(index=False).encode('utf-8-sig')
-
-            annotated_img = annotated_legend
+            annotated_img = annotated_legend if annotated_legend is not None else annotated
             img_buf = io.BytesIO()
             cv_to_pil(annotated_img).save(img_buf, format="PNG")
 
             dl_col1, dl_col2 = st.columns(2)
             with dl_col1:
-                st.download_button(f"Stáhnout snímek (Objekt #{obj_i + 1})",
-                                   data=img_buf.getvalue(),
-                                   file_name=f"Rozmerova_Detekce_obj{obj_i + 1}.png",
-                                   mime="image/png", key=f"img_dl_{obj_i}", use_container_width=True)
+                st.download_button(f"Stáhnout snímek", data=img_buf.getvalue(), file_name=f"obj{obj_i + 1}.png",
+                                   mime="image/png", use_container_width=True)
             with dl_col2:
-                st.download_button(f"Stáhnout tabulku s daty (CSV)",
-                                   data=csv_data,
-                                   file_name=f"Rozmerova_Detekce_obj{obj_i + 1}_data.csv",
-                                   mime="text/csv", key=f"csv_dl_{obj_i}", use_container_width=True)
+                st.download_button(f"Stáhnout CSV", data=df_export.to_csv(index=False).encode('utf-8-sig'),
+                                   file_name=f"obj{obj_i + 1}_data.csv", mime="text/csv", use_container_width=True)
