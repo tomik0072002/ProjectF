@@ -1333,7 +1333,6 @@ for obj_i, part in enumerate(parts):
                 st.download_button(f"Stáhnout CSV", data=df_export.to_csv(index=False).encode('utf-8-sig'),
                                    file_name=f"obj{obj_i + 1}_data.csv", mime="text/csv", use_container_width=True)
 
-    # Uložení vypočítaného stavu. Pokud se stav liší, skript se po doběhnutí znovu načte a název se bleskově upraví.
     if prev_nok != is_nok:
         st.session_state[f"is_nok_{obj_i}"] = is_nok
         needs_rerun = True
