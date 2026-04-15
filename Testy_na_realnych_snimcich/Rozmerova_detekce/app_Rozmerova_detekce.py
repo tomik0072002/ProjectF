@@ -128,6 +128,55 @@ def draw_holes_with_labels(out, holes):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1, cv2.LINE_AA)
 
 
+def clean_polygon_vertices(pts, peri, angle_merge_tol=6.0):
+    """Odstraňuje mikro-hrany (šum) a narovnává mělké úhly."""
+    pts = list(pts)
+    changed = True
+    min_len_px = max(3.0, 0.015 * peri)
+
+    max_iters = 100
+    iters = 0
+    while changed and len(pts) > 3 and iters < max_iters:
+        changed = False
+        iters += 1
+        n = len(pts)
+
+        for i in range(n):
+            p_curr = pts[i]
+            p_next = pts[(i + 1) % n]
+            dist = np.linalg.norm(p_next - p_curr)
+            if dist < min_len_px:
+                pts.pop((i + 1) % n)
+                changed = True
+                break
+
+        if changed: continue
+
+        n = len(pts)
+        for i in range(n):
+            p_prev = pts[(i - 1) % n]
+            p_curr = pts[i]
+            p_next = pts[(i + 1) % n]
+
+            v1 = p_curr - p_prev
+            v2 = p_next - p_curr
+
+            n1 = np.linalg.norm(v1)
+            n2 = np.linalg.norm(v2)
+
+            if n1 > 0 and n2 > 0:
+                cos_theta = np.dot(v1, v2) / (n1 * n2)
+                cos_theta = np.clip(cos_theta, -1.0, 1.0)
+                angle_diff = math.degrees(math.acos(cos_theta))
+
+                if angle_diff < angle_merge_tol:
+                    pts.pop(i)
+                    changed = True
+                    break
+
+    return np.array(pts)
+
+
 def get_edges(cnt, angle_merge_tol=6.0):
     peri = cv2.arcLength(cnt, True)
     area = cv2.contourArea(cnt)
@@ -137,8 +186,7 @@ def get_edges(cnt, angle_merge_tol=6.0):
         epsilon = 0.005 * peri
         approx = cv2.approxPolyDP(cnt, epsilon, True)
         for factor in [0.008, 0.012, 0.018, 0.025]:
-            if len(approx) <= 40:
-                break
+            if len(approx) <= 40: break
             approx = cv2.approxPolyDP(cnt, factor * peri, True)
     else:
         best = None
@@ -154,79 +202,57 @@ def get_edges(cnt, angle_merge_tol=6.0):
         approx = best if best is not None else cv2.approxPolyDP(cnt, 0.02 * peri, True)
 
     pts = approx.reshape(-1, 2).astype(np.float32)
-    n = len(pts)
 
+    if raw_circ < 0.75:
+        pts = clean_polygon_vertices(pts, peri, angle_merge_tol)
+
+    n = len(pts)
     raw_edges = []
     for i in range(n):
         p1 = pts[i]
         p2 = pts[(i + 1) % n]
         vec = p2 - p1
         length = float(np.linalg.norm(vec))
+        if length == 0: continue
         angle = math.degrees(math.atan2(float(vec[1]), float(vec[0]))) % 180.0
         mid = ((p1 + p2) / 2).astype(int)
         raw_edges.append({"p1": p1, "p2": p2, "angle": angle, "length": length, "mid": mid})
 
-    if raw_circ < 0.75 and len(raw_edges) >= 3:
-        merged = _merge_collinear_edges(raw_edges, angle_merge_tol)
-        if len(merged) >= 3:
-            raw_edges = merged
-
     return raw_edges
 
 
-def _merge_collinear_edges(raw_edges, tol_deg=6.0):
-    edges = list(raw_edges)
-    changed = True
-    max_iter = len(edges)
-    itr = 0
-    while changed and itr < max_iter:
-        changed = False
-        itr += 1
-        new_edges = []
-        used = [False] * len(edges)
-        i = 0
-        while i < len(edges):
-            if used[i]:
-                i += 1
-                continue
-            e = dict(edges[i])
-            j = (i + 1) % len(edges)
-            while j != i and not used[j]:
-                diff = abs(edges[j]["angle"] - e["angle"])
-                diff = min(diff, 180.0 - diff)
-                if diff < tol_deg:
-                    e["p2"] = edges[j]["p2"]
-                    used[j] = True
-                    changed = True
-                    j = (j + 1) % len(edges)
-                    vec = e["p2"] - e["p1"]
-                    e["length"] = float(np.linalg.norm(vec))
-                    e["angle"] = math.degrees(math.atan2(float(vec[1]), float(vec[0]))) % 180.0
-                    e["mid"] = ((e["p1"] + e["p2"]) / 2).astype(int)
-                else:
-                    break
-            vec = e["p2"] - e["p1"]
-            e["length"] = float(np.linalg.norm(vec))
-            e["angle"] = math.degrees(math.atan2(float(vec[1]), float(vec[0]))) % 180.0
-            e["mid"] = ((e["p1"] + e["p2"]) / 2).astype(int)
-            new_edges.append(e)
-            used[i] = True
-            i += 1
-        edges = new_edges
+def analyze_edge_straightness(cnt, edges, px_per_mm):
+    pts = cnt.reshape(-1, 2).astype(np.float32)
+    for e in edges:
+        e["dev_max_mm"] = 0.0
+        e["dev_mean_mm"] = 0.0
+        e["_raw_dists"] = []
 
-    if len(edges) >= 2:
-        first, last = edges[0], edges[-1]
-        diff = abs(first["angle"] - last["angle"])
-        diff = min(diff, 180.0 - diff)
-        if diff < tol_deg:
-            merged = dict(last)
-            merged["p2"] = first["p2"]
-            vec = merged["p2"] - merged["p1"]
-            merged["length"] = float(np.linalg.norm(vec))
-            merged["angle"] = math.degrees(math.atan2(float(vec[1]), float(vec[0]))) % 180.0
-            merged["mid"] = ((merged["p1"] + merged["p2"]) / 2).astype(int)
-            edges = [merged] + edges[1:-1]
+    for pt in pts:
+        min_dist = float('inf')
+        best_edge_idx = -1
+        for i, e in enumerate(edges):
+            p1, p2 = e["p1"], e["p2"]
+            line_vec = p2 - p1
+            line_len = np.linalg.norm(line_vec)
+            if line_len == 0: continue
+            pt_vec = pt - p1
+            t = np.dot(pt_vec, line_vec) / (line_len ** 2)
+            t = max(0.0, min(1.0, t))
+            closest_pt = p1 + t * line_vec
+            dist_to_segment = np.linalg.norm(pt - closest_pt)
+            if dist_to_segment < min_dist:
+                min_dist = dist_to_segment
+                best_edge_idx = i
+        if best_edge_idx != -1:
+            edges[best_edge_idx]["_raw_dists"].append(min_dist)
 
+    for e in edges:
+        dists = e["_raw_dists"]
+        if dists:
+            e["dev_max_mm"] = max(dists) / px_per_mm
+            e["dev_mean_mm"] = np.mean(dists) / px_per_mm
+        del e["_raw_dists"]
     return edges
 
 
@@ -651,7 +677,6 @@ def render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol, 
                 if klic == "Otvor":
                     continue
 
-                # Zjištění jednotky z názvu sloupce
                 jednotka = ""
                 if "[mm]" in klic:
                     jednotka = "mm"
@@ -664,7 +689,7 @@ def render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol, 
                     "Minimum": None,
                     "Maximum": None,
                     "Jednotka": jednotka,
-                    "Výsledek": "Info"  # Značí, že jde o čisté měření, nikoliv toleranční test
+                    "Výsledek": "Info"
                 })
 
         st.markdown("---")
@@ -686,7 +711,6 @@ def render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol, 
             x1, x2 = max(0, hx - pad), min(base_img.shape[1], hx + hw + pad)
             h_cropped = h_preview[y1:y2, x1:x2]
 
-            # ÚPRAVA VELIKOSTI: Změněno z [1, 2, 1] na [1, 1, 1]
             hc_1, hc_2, hc_3 = st.columns([1, 1, 1])
             with hc_2:
                 st.image(cv_to_pil(h_cropped), caption=f"Detail hran Otvoru #{sel_h_idx + 1}", use_container_width=True)
@@ -918,6 +942,7 @@ HCOLORS = {
     "len_e": (0, 114, 178),
     "ang_a": (230, 158, 0),
     "ang_b": (213, 94, 0),
+    "straight": (0, 0, 255),
 }
 
 # ─── Per-object tabs ──────────────────────────────────────────────────────────
@@ -984,7 +1009,6 @@ for obj_i, part in enumerate(parts):
             if holes:
                 draw_holes_with_labels(circ_vis, holes)
 
-            # ÚPRAVA VELIKOSTI: Změněno z [1, 2, 1] na [1, 1, 1]
             c_v1, c_v2, c_v3 = st.columns([1, 1, 1])
             with c_v2:
                 st.image(cv_to_pil(circ_vis), use_container_width=True)
@@ -1120,6 +1144,9 @@ for obj_i, part in enumerate(parts):
             export_data_list = []
             rows_html_main = []
 
+            # Zpracování odchylky přímosti
+            edges = analyze_edge_straightness(cnt, edges, px_per_mm)
+
             st.markdown("**Vizualizace nalezených hran**")
             st.markdown(
                 f'<div class="info-box">Detekováno hran: {n_edges}. Čísla hran viz náhled.*',
@@ -1139,7 +1166,6 @@ for obj_i, part in enumerate(parts):
             ]
             edge_preview = draw_legend_pil(edge_preview, preview_legend)
 
-            # ÚPRAVA VELIKOSTI: Změněno z [1, 2, 1] na [1, 1, 1]
             c_p1, c_p2, c_p3 = st.columns([1, 1, 1])
             with c_p2:
                 st.image(cv_to_pil(edge_preview), use_container_width=True)
@@ -1151,7 +1177,8 @@ for obj_i, part in enumerate(parts):
                 edges_df_data.append({
                     "Hrana": f"H{i + 1}",
                     "Délka [mm]": round(length_mm, 3),
-                    "Úhel [°]": round(e['angle'], 1)
+                    "Úhel [°]": round(e['angle'], 1),
+                    "Max. odchylka přímosti [mm]": round(e['dev_max_mm'], 3)
                 })
                 export_data_list.append({
                     "Veličina": f"Délka hrany H{i + 1}",
@@ -1288,6 +1315,28 @@ for obj_i, part in enumerate(parts):
                         export_data_list.append(r_data)
 
             with st.container():
+                st.markdown("**Přímost hrany (Roztřesenost)**")
+                rc = st.columns([1, 1, 1, 1, 1])
+                cfg["straight_en"] = rc[0].checkbox("Aktivní", value=False, key=f"straight_en_{obj_i}")
+                cfg["straight_edge"] = rc[1].selectbox("Zkoumaná hrana ", nums, 0, key=f"straight_edge_{obj_i}",
+                                                       disabled=not cfg["straight_en"],
+                                                       format_func=edge_label) - 1
+                cfg["straight_max"] = rc[2].number_input("Max. povolená odchylka [mm]", 0.0, 50.0, 0.5,
+                                                         step=0.1, key=f"straight_max_{obj_i}",
+                                                         disabled=not cfg["straight_en"])
+
+                if cfg["straight_en"]:
+                    ie = cfg["straight_edge"]
+                    if ie < n_edges:
+                        dev = edges[ie]["dev_max_mm"]
+                        ok = dev <= cfg["straight_max"]
+                        if not ok: is_nok = True
+                        r_md, r_data = tol_row(f"Přímost (roztřesenost) H{ie + 1}", dev, 0.0, cfg["straight_max"], "mm")
+                        assign_highlight(ie, HCOLORS["straight"])
+                        rows_html_main.append(r_md)
+                        export_data_list.append(r_data)
+
+            with st.container():
                 st.markdown("**Rozměr objektu hlavního tvaru (šířka / výška)**")
                 dc = st.columns([1, 1, 1, 1, 1, 1])
                 cfg["dim_en"] = dc[0].checkbox("Aktivní", value=True, key=f"dim_en_{obj_i}")
@@ -1334,6 +1383,7 @@ for obj_i, part in enumerate(parts):
                 for r in rows_html_main:
                     if r: st.markdown(r)
 
+            # Volání zobrazení a analýzy děr
             is_holes_nok, export_data_list = render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol,
                                                                   base_img, export_data_list)
             if is_holes_nok: is_nok = True
@@ -1375,9 +1425,15 @@ for obj_i, part in enumerate(parts):
                     (HCOLORS["len_e"],
                      f"H{ie + 1}  delka  ({edges[ie]['length'] / px_per_mm:.1f} mm, {edges[ie]['angle']:.1f} deg)")
                 )
+            if cfg.get("straight_en", False) and cfg["straight_edge"] < n_edges:
+                ie = cfg["straight_edge"]
+                legend_defs.append(
+                    (HCOLORS["straight"],
+                     f"H{ie + 1}  primost (odchylka: {edges[ie]['dev_max_mm']:.3f} mm)")
+                )
+
             annotated_legend = draw_legend_pil(annotated, legend_defs)
 
-            # ÚPRAVA VELIKOSTI: Změněno z [1, 2, 1] na [1, 1, 1]
             c_a1, c_a2, c_a3 = st.columns([1, 1, 1])
             with c_a2:
                 st.image(cv_to_pil(annotated_legend), use_container_width=True)
