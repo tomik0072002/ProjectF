@@ -296,29 +296,6 @@ def circularity_pct(cnt):
     return round(min((4 * math.pi * area) / (peri ** 2), 1.0) * 100.0, 2)
 
 
-def classify_shape(cnt):
-    area = cv2.contourArea(cnt)
-    peri = cv2.arcLength(cnt, True)
-    circ = (4 * math.pi * area) / (peri ** 2) if peri > 0 else 0
-
-    coarse = cv2.approxPolyDP(cnt, 0.04 * peri, True)
-    n_coarse = len(coarse)
-
-    _, (rw, rh), _ = cv2.minAreaRect(cnt)
-    aspect = min(rw, rh) / max(rw, rh) if max(rw, rh) > 0 else 1.0
-
-    if circ >= 0.85 and aspect >= 0.88:
-        if n_coarse >= 7:
-            return "circle"
-    if circ >= 0.70 and n_coarse >= 7:
-        return "ellipse"
-    if circ >= 0.90:
-        return "circle"
-    if circ >= 0.78:
-        return "ellipse"
-    return "polygon"
-
-
 def circle_metrics(cnt, px_per_mm):
     pts = cnt.reshape(-1, 2).astype(np.float32)
     A = np.column_stack([2 * pts[:, 0], 2 * pts[:, 1], np.ones(len(pts))])
@@ -733,8 +710,6 @@ def render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol, 
 
             h_cropped_base = base_img[y1:y2, x1:x2].copy()
 
-            # OPRAVA MALÉHO VÝŘEZU: Místo toho, aby program kreslil blechy na malý
-            # obrázek, který se pak rozmaže, obrázek si nejprve zvětší na 800px!
             crop_h, crop_w = h_cropped_base.shape[:2]
             target_dim = 800.0
             resize_ratio = target_dim / max(crop_w, crop_h)
@@ -757,7 +732,6 @@ def render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol, 
             shifted_cnt = (sel_h_cnt - np.array([[[x1, y1]]])) * resize_ratio
             shifted_cnt = np.round(shifted_cnt).astype(np.int32)
 
-            # Protože je obrázek nyní velký (min 800px), bubliny a fonty budou dokonalé
             h_cropped = draw_edge_map(h_cropped_base, shifted_edges, {}, raw_cnt=shifted_cnt)
 
             hc_1, hc_2, hc_3 = st.columns([1, 1, 1])
@@ -982,6 +956,10 @@ HCOLORS = {
 }
 
 # ─── Per-object tabs ──────────────────────────────────────────────────────────
+
+# Proměnná spouštějící překreslení na konci skriptu
+needs_rerun = False
+
 for obj_i, part in enumerate(parts):
     cnt = part["outer"]
     holes = part["holes"]
@@ -997,18 +975,27 @@ for obj_i, part in enumerate(parts):
 
     rw_mm = max(rw_px, rh_px) / px_per_mm
     rh_mm = min(rw_px, rh_px) / px_per_mm
-    shape = classify_shape(cnt)
     edges = get_edges(cnt, angle_merge_tol=angle_merge_tol)
     n_edges = len(edges)
 
-    shape_labels = {"circle": "Kruh", "ellipse": "Elipsa / Ovál", "polygon": "Polygon"}
+    # Zjištění předchozího stavu tolerance (aby byl viditelný ihned v nadpisu expanderu)
+    prev_nok = st.session_state.get(f"is_nok_{obj_i}", None)
+    if prev_nok is None:
+        status_badge = "⏳ Počítám..."
+    elif prev_nok:
+        status_badge = "🔴 NOK"
+    else:
+        status_badge = "🟢 OK"
 
+    # Z expanderu odebrána proměnná s tvarem a vložen status
     with st.expander(
-            f"Objekt #{obj_i + 1}  —  {rw_mm:.1f} × {rh_mm:.1f} mm  |  detekce: {shape_labels.get(shape, 'Neznámý')}",
+            f"Objekt #{obj_i + 1}  —  {rw_mm:.1f} × {rh_mm:.1f} mm  |  Stav: {status_badge}",
             expanded=True):
+
+        # Pevně nastaven defaultní tvar na polygon
         mode_choice = st.segmented_control(
             label="", label_visibility="collapsed", options=["polygon", "circle"],
-            default="polygon" if shape == "polygon" else "circle",
+            default="polygon",
             format_func=lambda x: {"polygon": "Polygon — výběr hran, rovnoběžnost, kolmost, úhly",
                                    "circle": "Kruh — průměr, radiální odchylka, kruhovitost"}[x],
             key=f"mode_{obj_i}"
@@ -1345,3 +1332,12 @@ for obj_i, part in enumerate(parts):
             with dl_col2:
                 st.download_button(f"Stáhnout CSV", data=df_export.to_csv(index=False).encode('utf-8-sig'),
                                    file_name=f"obj{obj_i + 1}_data.csv", mime="text/csv", use_container_width=True)
+
+    # Uložení vypočítaného stavu. Pokud se stav liší, skript se po doběhnutí znovu načte a název se bleskově upraví.
+    if prev_nok != is_nok:
+        st.session_state[f"is_nok_{obj_i}"] = is_nok
+        needs_rerun = True
+
+# Spuštění překreslení pokud se změní stav OK/NOK
+if needs_rerun:
+    st.rerun()
