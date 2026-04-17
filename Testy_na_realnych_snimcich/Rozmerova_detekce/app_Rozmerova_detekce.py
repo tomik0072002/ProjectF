@@ -86,7 +86,7 @@ def calibrate(img_bytes, rows, cols, square_mm):
             break
 
     if not ret:
-        return None, None, None, None, "Rohy šachovnice nebyly nalezeny."
+        return None, None, None, None, "Rohy šachovnice nebyly nalezeny.", None
 
     corners_ref = cv2.cornerSubPix(
         used_gray, corners.astype(np.float32), (11, 11), (-1, -1), criteria
@@ -98,27 +98,31 @@ def calibrate(img_bytes, rows, cols, square_mm):
     _, cam_mtx, dist, rvecs, tvecs = cv2.calibrateCamera(
         [objp], [corners_ref], (w, h), None, None
     )
-    proj, _ = cv2.projectPoints(objp, rvecs[0], tvecs[0], cam_mtx, dist)
-    proj = proj.reshape(-1, 2)
+
+    # OPRAVA 1: Extrakce nezkreslených bodů pro konzistentní MĚŘÍTKO (PPM)
+    # Tím zajistíme, že měřítko je počítáno pro obraz se zachovaným poměrem stran po undistortu
+    corners_undist = cv2.undistortPoints(corners_ref, cam_mtx, dist, P=cam_mtx)
+    pts = corners_undist.reshape(-1, 2)
 
     dx, dy = [], []
     for r in range(rows):
         for c in range(cols - 1):
             i = r * cols + c
-            dx.append(np.linalg.norm(proj[i + 1] - proj[i]))
+            dx.append(np.linalg.norm(pts[i + 1] - pts[i]))
     for r in range(rows - 1):
         for c in range(cols):
             i = r * cols + c
-            dy.append(np.linalg.norm(proj[i + cols] - proj[i]))
+            dy.append(np.linalg.norm(pts[i + cols] - pts[i]))
     ppm = ((np.mean(dx) + np.mean(dy)) / 2.0) / square_mm
 
-    debug = img.copy()
-    pts = corners_ref.reshape(-1, 2)
+    # Zobrazíme debug na nezkresleném snímku
+    debug = cv2.undistort(img, cam_mtx, dist, None, cam_mtx)
     for i, (cx, cy) in enumerate(pts):
         color = (int(255 * i / len(pts)), int(255 * (1 - i / len(pts))), 180)
         cv2.circle(debug, (int(cx), int(cy)), dot_r, color, -1)
         cv2.circle(debug, (int(cx), int(cy)), dot_r, (255, 255, 255), dot_th)
-    return cam_mtx, dist, ppm, debug, None
+
+    return cam_mtx, dist, ppm, debug, None, (w, h)
 
 
 # ─── Geometry ────────────────────────────────────────────────────────────────
@@ -357,18 +361,37 @@ def draw_circle_overlay(base_img, cm, px_per_mm):
 
 # ─── Detection ───────────────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
-def detect_objects(img_bytes, _cam_mtx, _dist, canny_low, canny_high,
+def detect_objects(img_bytes, _cam_mtx, _dist, _calib_size, canny_low, canny_high,
                    min_area, max_obj, merge, merge_dist, detect_holes, det_method, invert_thresh, min_hole_area):
     arr = np.frombuffer(img_bytes, np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
 
+    scale_ratio = 1.0
+
     if _cam_mtx is not None:
         h, w = img.shape[:2]
-        new_mtx, roi = cv2.getOptimalNewCameraMatrix(_cam_mtx, _dist, (w, h), 1, (w, h))
-        img = cv2.undistort(img, _cam_mtx, _dist, None, new_mtx)
-        x, y, rw, rh = roi
-        if all(v > 0 for v in (x, y, rw, rh)):
-            img = img[y:y + rh, x:x + rw]
+        scaled_mtx = _cam_mtx.copy()
+
+        # OPRAVA 2: Adaptivní škálování matice kamery při nahrání jiného rozlišení/orientace snímku
+        if _calib_size is not None:
+            cal_w, cal_h = _calib_size
+            scale_x = w / cal_w
+            scale_y = h / cal_h
+            scale_ratio = (scale_x + scale_y) / 2.0
+
+            scaled_mtx[0, 0] *= scale_x
+            scaled_mtx[1, 1] *= scale_y
+            scaled_mtx[0, 2] *= scale_x
+            scaled_mtx[1, 2] *= scale_y
+
+        # OPRAVA 3: Použití scaled_mtx místo optimalNewCameraMatrix, aby nedošlo
+        # ke ztrátě poměru stran (Aspect ratio stretch)
+        img = cv2.undistort(img, scaled_mtx, _dist, None, scaled_mtx)
+
+        # Zamezení falešné detekce černých hran vzniklých z undistort operace
+        mask = np.ones((h, w), dtype=np.uint8) * 255
+        mask = cv2.undistort(mask, scaled_mtx, _dist, None, scaled_mtx)
+        img[mask == 0] = 255  # Přebarvit černé deformované okraje na pozadí
 
     img_h, img_w = img.shape[:2]
     total_img_area = img_h * img_w
@@ -452,7 +475,7 @@ def detect_objects(img_bytes, _cam_mtx, _dist, canny_low, canny_high,
 
     edge_vis_bytes = cv2.imencode(".png", clean_map)[1].tobytes()
     img_bytes_out = cv2.imencode(".png", img)[1].tobytes()
-    return img_bytes_out, edge_vis_bytes, parts_serialized
+    return img_bytes_out, edge_vis_bytes, parts_serialized, scale_ratio
 
 
 def deserialize_parts(parts_s):
@@ -889,11 +912,17 @@ with st.sidebar:
 
 # ─── Calibration ──────────────────────────────────────────────────────────────
 cam_mtx, dist_c, px_per_mm = None, None, None
+calib_size = None
 
 if calib_file:
     with st.spinner("Probíhá kalibrace..."):
         calib_file.seek(0)
-        cam_mtx, dist_c, px_per_mm_cal, debug_img, err = calibrate(calib_file.read(), cb_rows, cb_cols, sq_mm)
+        res = calibrate(calib_file.read(), cb_rows, cb_cols, sq_mm)
+        if len(res) == 6:
+            cam_mtx, dist_c, px_per_mm_cal, debug_img, err, calib_size = res
+        else:
+            cam_mtx, dist_c, px_per_mm_cal, debug_img, err = res
+
     if err:
         st.error(err)
     else:
@@ -925,9 +954,14 @@ orig_pil = Image.open(io.BytesIO(img_bytes))
 
 # ─── Detect ───────────────────────────────────────────────────────────────────
 with st.spinner("Detekuji objekty..."):
-    img_out_bytes, edge_vis_bytes, parts_s = detect_objects(
-        img_bytes, cam_mtx, dist_c, canny_low, canny_high, min_area, max_obj, merge, merge_dist, detect_holes,
+    img_out_bytes, edge_vis_bytes, parts_s, scale_ratio = detect_objects(
+        img_bytes, cam_mtx, dist_c, calib_size, canny_low, canny_high, min_area, max_obj, merge, merge_dist,
+        detect_holes,
         det_method, invert_thresh, min_hole_area)
+
+# Ochrana ppm pro různé velikosti obrázků (kdy se liší fotka z telefonu oproti kalibraci)
+if scale_ratio != 1.0 and not (manual_ppm and manual_ppm > 0):
+    px_per_mm = px_per_mm * scale_ratio
 
 base_arr = np.frombuffer(img_out_bytes, np.uint8)
 edge_arr = np.frombuffer(edge_vis_bytes, np.uint8)
