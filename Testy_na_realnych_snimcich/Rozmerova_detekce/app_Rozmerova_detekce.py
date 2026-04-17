@@ -99,8 +99,6 @@ def calibrate(img_bytes, rows, cols, square_mm):
         [objp], [corners_ref], (w, h), None, None
     )
 
-    # OPRAVA 1: Extrakce nezkreslených bodů pro konzistentní MĚŘÍTKO (PPM)
-    # Tím zajistíme, že měřítko je počítáno pro obraz se zachovaným poměrem stran po undistortu
     corners_undist = cv2.undistortPoints(corners_ref, cam_mtx, dist, P=cam_mtx)
     pts = corners_undist.reshape(-1, 2)
 
@@ -115,7 +113,6 @@ def calibrate(img_bytes, rows, cols, square_mm):
             dy.append(np.linalg.norm(pts[i + cols] - pts[i]))
     ppm = ((np.mean(dx) + np.mean(dy)) / 2.0) / square_mm
 
-    # Zobrazíme debug na nezkresleném snímku
     debug = cv2.undistort(img, cam_mtx, dist, None, cam_mtx)
     for i, (cx, cy) in enumerate(pts):
         color = (int(255 * i / len(pts)), int(255 * (1 - i / len(pts))), 180)
@@ -126,34 +123,6 @@ def calibrate(img_bytes, rows, cols, square_mm):
 
 
 # ─── Geometry ────────────────────────────────────────────────────────────────
-
-def draw_holes_with_labels(out, holes):
-    h_img, w_img = out.shape[:2]
-    d_scale = get_drawing_scale(h_img, w_img)
-
-    fs = max(0.4, 0.7 * d_scale)
-    th = max(1, int(2 * d_scale))
-    line_th = max(1, int(2 * d_scale))
-    badge_r = max(10, int(22 * d_scale))
-    text_y_offset = int(7 * d_scale)
-
-    cv2.drawContours(out, holes, -1, (0, 0, 255), line_th, cv2.LINE_AA)
-    for i, h_cnt in enumerate(holes):
-        M = cv2.moments(h_cnt)
-        if M["m00"] != 0:
-            cx = int(M["m10"] / M["m00"])
-            cy = int(M["m01"] / M["m00"])
-        else:
-            cx, cy = int(h_cnt[0][0][0]), int(h_cnt[0][0][1])
-
-        label = f"#{i + 1}"
-        cv2.circle(out, (cx, cy), badge_r, (255, 255, 255), -1)
-        cv2.circle(out, (cx, cy), badge_r, (0, 0, 255), line_th, cv2.LINE_AA)
-
-        tw = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs, th)[0][0]
-        cv2.putText(out, label, (cx - tw // 2, cy + text_y_offset),
-                    cv2.FONT_HERSHEY_SIMPLEX, fs, (0, 0, 0), th, cv2.LINE_AA)
-
 
 def clean_polygon_vertices(pts, peri, angle_merge_tol=6.0):
     pts = list(pts)
@@ -194,6 +163,94 @@ def clean_polygon_vertices(pts, peri, angle_merge_tol=6.0):
     return np.array(pts)
 
 
+def fit_sharp_corners(cnt_pts, rough_pts, peri, angle_merge_tol):
+    """Proloží matematické přímky středy stěn a najde jejich dokonalý průsečík (ignoruje rohy)."""
+    rough_pts = clean_polygon_vertices(rough_pts, peri, angle_merge_tol)
+    n_edges = len(rough_pts)
+    if n_edges < 3:
+        return rough_pts
+
+    edge_points = [[] for _ in range(n_edges)]
+
+    for pt in cnt_pts:
+        min_dist = float('inf')
+        best_edge = -1
+        best_t = 0.0
+
+        for i in range(n_edges):
+            p1 = rough_pts[i]
+            p2 = rough_pts[(i + 1) % n_edges]
+            line_vec = p2 - p1
+            line_len = np.linalg.norm(line_vec)
+            if line_len == 0: continue
+
+            pt_vec = pt - p1
+            t = np.dot(pt_vec, line_vec) / (line_len ** 2)
+            t_clamped = max(0.0, min(1.0, t))
+            closest_pt = p1 + t_clamped * line_vec
+            dist = np.linalg.norm(pt - closest_pt)
+
+            if dist < min_dist:
+                min_dist = dist
+                best_edge = i
+                best_t = t_clamped
+
+        if best_edge != -1:
+            edge_points[best_edge].append((pt, best_t))
+
+    fitted_lines = []
+    for i in range(n_edges):
+        pts_with_t = edge_points[i]
+        pts_with_t.sort(key=lambda x: x[1])
+
+        n_pts = len(pts_with_t)
+        if n_pts >= 10:
+            start_idx = int(0.20 * n_pts)
+            end_idx = int(0.80 * n_pts)
+            valid_pts = [p[0] for p in pts_with_t[start_idx:end_idx]]
+        elif n_pts >= 3:
+            valid_pts = [p[0] for p in pts_with_t]
+        else:
+            valid_pts = []
+
+        if len(valid_pts) >= 2:
+            valid_pts_arr = np.array(valid_pts, dtype=np.float32)
+            line = cv2.fitLine(valid_pts_arr, cv2.DIST_L2, 0, 0.01, 0.01)
+            fitted_lines.append((float(line[0][0]), float(line[1][0]), float(line[2][0]), float(line[3][0])))
+        else:
+            p1 = rough_pts[i]
+            p2 = rough_pts[(i + 1) % n_edges]
+            vx = p2[0] - p1[0]
+            vy = p2[1] - p1[1]
+            norm = math.hypot(vx, vy)
+            if norm == 0: norm = 1
+            fitted_lines.append((vx / norm, vy / norm, float(p1[0]), float(p1[1])))
+
+    sharp_pts = []
+    for i in range(n_edges):
+        l1 = fitted_lines[i]
+        l2 = fitted_lines[(i + 1) % n_edges]
+
+        vx1, vy1, x1, y1 = l1
+        vx2, vy2, x2, y2 = l2
+
+        denom = vx1 * vy2 - vy1 * vx2
+        if abs(denom) > 1e-6:
+            t1 = ((x2 - x1) * vy2 - (y2 - y1) * vx2) / denom
+            ix = x1 + t1 * vx1
+            iy = y1 + t1 * vy1
+
+            rough_p = rough_pts[(i + 1) % n_edges]
+            if math.hypot(ix - rough_p[0], iy - rough_p[1]) > 0.15 * peri:
+                sharp_pts.append(rough_p)
+            else:
+                sharp_pts.append(np.array([ix, iy], dtype=np.float32))
+        else:
+            sharp_pts.append(rough_pts[(i + 1) % n_edges])
+
+    return np.array(sharp_pts, dtype=np.float32)
+
+
 def get_edges(cnt, angle_merge_tol=6.0):
     peri = cv2.arcLength(cnt, True)
     area = cv2.contourArea(cnt)
@@ -221,7 +278,7 @@ def get_edges(cnt, angle_merge_tol=6.0):
     pts = approx.reshape(-1, 2).astype(np.float32)
 
     if raw_circ < 0.75:
-        pts = clean_polygon_vertices(pts, peri, angle_merge_tol)
+        pts = fit_sharp_corners(cnt.reshape(-1, 2).astype(np.float32), pts, peri, angle_merge_tol)
 
     n = len(pts)
     raw_edges = []
@@ -235,7 +292,179 @@ def get_edges(cnt, angle_merge_tol=6.0):
         mid = ((p1 + p2) / 2).astype(int)
         raw_edges.append({"p1": p1, "p2": p2, "angle": angle, "length": length, "mid": mid})
 
-    return raw_edges
+    return raw_edges, pts
+
+
+def draw_holes_with_labels(out, holes, angle_merge_tol):
+    h_img, w_img = out.shape[:2]
+    d_scale = get_drawing_scale(h_img, w_img)
+
+    fs = max(0.4, 0.7 * d_scale)
+    th = max(1, int(2 * d_scale))
+    line_th = max(1, int(2 * d_scale))
+    badge_r = max(10, int(22 * d_scale))
+    text_y_offset = int(7 * d_scale)
+
+    for i, h_cnt in enumerate(holes):
+        peri = cv2.arcLength(h_cnt, True)
+        area = cv2.contourArea(h_cnt)
+        raw_circ = (4 * math.pi * area) / (peri ** 2) if peri > 0 else 0
+
+        if raw_circ < 0.75:
+            edges, sharp_pts = get_edges(h_cnt, angle_merge_tol)
+            if sharp_pts is not None and len(sharp_pts) >= 3:
+                cv2.polylines(out, [sharp_pts.astype(np.int32)], True, (0, 0, 255), line_th, cv2.LINE_AA)
+                for pt in sharp_pts:
+                    cv2.circle(out, tuple(pt.astype(int)), max(1, line_th // 2), (0, 0, 255), -1, cv2.LINE_AA)
+            else:
+                cv2.drawContours(out, [h_cnt], -1, (0, 0, 255), line_th, cv2.LINE_AA)
+        else:
+            cv2.drawContours(out, [h_cnt], -1, (0, 0, 255), line_th, cv2.LINE_AA)
+
+        M = cv2.moments(h_cnt)
+        if M["m00"] != 0:
+            cx = int(M["m10"] / M["m00"])
+            cy = int(M["m01"] / M["m00"])
+        else:
+            cx, cy = int(h_cnt[0][0][0]), int(h_cnt[0][0][1])
+
+        label = f"#{i + 1}"
+        cv2.circle(out, (cx, cy), badge_r, (255, 255, 255), -1)
+        cv2.circle(out, (cx, cy), badge_r, (0, 0, 255), line_th, cv2.LINE_AA)
+
+        tw = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs, th)[0][0]
+        cv2.putText(out, label, (cx - tw // 2, cy + text_y_offset),
+                    cv2.FONT_HERSHEY_SIMPLEX, fs, (0, 0, 0), th, cv2.LINE_AA)
+
+
+def draw_edge_map(base_img, edges, highlights, raw_cnt=None, sharp_pts=None):
+    out = base_img.copy()
+    h_img, w_img = out.shape[:2]
+
+    d_scale = get_drawing_scale(h_img, w_img)
+
+    th_dash = max(1, int(1.5 * d_scale))
+    th_highlight = max(1, int(3 * d_scale))
+    th_badge_outline = max(1, int(2 * d_scale))
+    th_raw_cnt = max(1, int(1.5 * d_scale))
+    dash_len = max(2, int(10 * d_scale))
+    gap_len = max(2, int(10 * d_scale))
+
+    # Proměnné pro velikost fontu přidány zpět!
+    fs_edge = max(0.4, 0.7 * d_scale)
+    fs_edge_hi = max(0.4, 0.8 * d_scale)
+    th_edge_text = max(1, int(2 * d_scale))
+
+    if sharp_pts is not None and len(sharp_pts) >= 3:
+        cv2.polylines(out, [sharp_pts.astype(np.int32)], True, (160, 160, 160), th_raw_cnt, cv2.LINE_AA)
+    elif raw_cnt is not None:
+        cv2.drawContours(out, [raw_cnt], 0, (160, 160, 160), th_raw_cnt, cv2.LINE_AA)
+
+    for i, e in enumerate(edges):
+        if i in highlights:
+            continue
+        p1 = tuple(e["p1"].astype(int))
+        p2 = tuple(e["p2"].astype(int))
+        dist = int(np.linalg.norm(np.array(p2) - np.array(p1)))
+        if dist == 0:
+            continue
+        dx = (p2[0] - p1[0]) / dist
+        dy = (p2[1] - p1[1]) / dist
+        pos = 0
+        drawing = True
+        while pos < dist:
+            seg_end = min(pos + (dash_len if drawing else gap_len), dist)
+            if drawing:
+                sx, sy = int(p1[0] + pos * dx), int(p1[1] + pos * dy)
+                ex, ey = int(p1[0] + seg_end * dx), int(p1[1] + seg_end * dy)
+                cv2.line(out, (sx, sy), (ex, ey), (150, 150, 150), th_dash, cv2.LINE_AA)
+            pos = seg_end
+            drawing = not drawing
+
+    for i, e in enumerate(edges):
+        if i not in highlights:
+            continue
+        p1 = tuple(e["p1"].astype(int))
+        p2 = tuple(e["p2"].astype(int))
+        color_bgr = highlights[i]
+
+        cv2.line(out, p1, p2, color_bgr, th_highlight, cv2.LINE_AA)
+        cv2.circle(out, p1, max(1, th_highlight // 2), color_bgr, -1, cv2.LINE_AA)
+        cv2.circle(out, p2, max(1, th_highlight // 2), color_bgr, -1, cv2.LINE_AA)
+
+    badge_r_highlight = max(10, int(24 * d_scale))
+    badge_r_normal = max(8, int(20 * d_scale))
+    text_y_offset = int(6 * d_scale)
+
+    for i, e in enumerate(edges):
+        mid = tuple(e["mid"].astype(int))
+        is_hi = i in highlights
+        badge_color = highlights[i] if is_hi else (120, 120, 120)
+        curr_badge_r = badge_r_highlight if is_hi else badge_r_normal
+
+        cv2.circle(out, mid, curr_badge_r, (255, 255, 255), -1)
+        curr_badge_th = th_badge_outline if is_hi else max(1, int(1 * d_scale))
+        cv2.circle(out, mid, curr_badge_r, badge_color, curr_badge_th, cv2.LINE_AA)
+
+        label = str(i + 1)
+        curr_fs = fs_edge_hi if is_hi else fs_edge
+
+        tw = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, curr_fs, th_edge_text)[0][0]
+        cv2.putText(out, label, (mid[0] - tw // 2, mid[1] + text_y_offset),
+                    cv2.FONT_HERSHEY_SIMPLEX, curr_fs, (0, 0, 0), th_edge_text, cv2.LINE_AA)
+
+    return out
+
+
+def draw_legend_cv(cv_img, legend_defs):
+    if not legend_defs:
+        return cv_img
+
+    out = cv_img.copy()
+    h_img, w_img = out.shape[:2]
+    d_scale = get_drawing_scale(h_img, w_img)
+
+    fs = max(0.4, 0.7 * d_scale)
+    th = max(1, int(1.5 * d_scale))
+    pad = max(10, int(20 * d_scale))
+    swatch = max(12, int(25 * d_scale))
+    gap = max(6, int(15 * d_scale))
+    line_spacing = max(6, int(15 * d_scale))
+
+    max_tw = 0
+    max_th = 0
+    for _, txt in legend_defs:
+        (tw, th_txt), _ = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, fs, th)
+        max_tw = max(max_tw, tw)
+        max_th = max(max_th, th_txt)
+
+    row_h = max(swatch, max_th)
+
+    panel_w = pad * 2 + swatch + gap + max_tw
+    panel_h = pad * 2 + (len(legend_defs) * row_h) + ((len(legend_defs) - 1) * line_spacing)
+
+    x0, y0 = max(10, int(20 * d_scale)), max(10, int(20 * d_scale))
+
+    overlay = out.copy()
+    cv2.rectangle(overlay, (x0, y0), (x0 + panel_w, y0 + panel_h), (255, 255, 255), -1)
+    cv2.addWeighted(overlay, 0.85, out, 0.15, 0, out)
+
+    cv2.rectangle(out, (x0, y0), (x0 + panel_w, y0 + panel_h), (100, 100, 100), max(1, int(1 * d_scale)))
+
+    curr_y = y0 + pad
+    for bgr, txt in legend_defs:
+        cv2.rectangle(out, (x0 + pad, curr_y), (x0 + pad + swatch, curr_y + swatch), bgr, -1)
+        cv2.rectangle(out, (x0 + pad, curr_y), (x0 + pad + swatch, curr_y + swatch), (50, 50, 50),
+                      max(1, int(1 * d_scale)))
+
+        (tw, th_txt), _ = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, fs, th)
+        text_y = curr_y + (swatch + th_txt) // 2
+        cv2.putText(out, txt, (x0 + pad + swatch + gap, text_y), cv2.FONT_HERSHEY_SIMPLEX, fs, (0, 0, 0), th,
+                    cv2.LINE_AA)
+
+        curr_y += row_h + line_spacing
+
+    return out
 
 
 def analyze_edge_straightness(cnt, edges, px_per_mm):
@@ -362,17 +591,17 @@ def draw_circle_overlay(base_img, cm, px_per_mm):
 # ─── Detection ───────────────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
 def detect_objects(img_bytes, _cam_mtx, _dist, _calib_size, canny_low, canny_high,
-                   min_area, max_obj, merge, merge_dist, detect_holes, det_method, invert_thresh, min_hole_area):
+                   min_area, max_obj, merge, merge_dist, detect_holes, det_method, invert_thresh, min_hole_area,
+                   apply_undistort):
     arr = np.frombuffer(img_bytes, np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
 
     scale_ratio = 1.0
 
-    if _cam_mtx is not None:
+    if _cam_mtx is not None and apply_undistort:
         h, w = img.shape[:2]
         scaled_mtx = _cam_mtx.copy()
 
-        # OPRAVA 2: Adaptivní škálování matice kamery při nahrání jiného rozlišení/orientace snímku
         if _calib_size is not None:
             cal_w, cal_h = _calib_size
             scale_x = w / cal_w
@@ -384,14 +613,24 @@ def detect_objects(img_bytes, _cam_mtx, _dist, _calib_size, canny_low, canny_hig
             scaled_mtx[0, 2] *= scale_x
             scaled_mtx[1, 2] *= scale_y
 
-        # OPRAVA 3: Použití scaled_mtx místo optimalNewCameraMatrix, aby nedošlo
-        # ke ztrátě poměru stran (Aspect ratio stretch)
         img = cv2.undistort(img, scaled_mtx, _dist, None, scaled_mtx)
 
-        # Zamezení falešné detekce černých hran vzniklých z undistort operace
         mask = np.ones((h, w), dtype=np.uint8) * 255
         mask = cv2.undistort(mask, scaled_mtx, _dist, None, scaled_mtx)
-        img[mask == 0] = 255  # Přebarvit černé deformované okraje na pozadí
+
+        kernel_mask = np.ones((9, 9), np.uint8)
+        mask = cv2.erode(mask, kernel_mask, iterations=1)
+
+        bg_color = (255, 255, 255) if invert_thresh else (0, 0, 0)
+        img[mask < 255] = bg_color
+
+    elif _cam_mtx is not None and not apply_undistort:
+        if _calib_size is not None:
+            h, w = img.shape[:2]
+            cal_w, cal_h = _calib_size
+            scale_x = w / cal_w
+            scale_y = h / cal_h
+            scale_ratio = (scale_x + scale_y) / 2.0
 
     img_h, img_w = img.shape[:2]
     total_img_area = img_h * img_w
@@ -399,15 +638,16 @@ def detect_objects(img_bytes, _cam_mtx, _dist, _calib_size, canny_low, canny_hig
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    if "Otsu" in det_method:
-        thresh_type = cv2.THRESH_BINARY_INV if invert_thresh else cv2.THRESH_BINARY
-        _, processed = cv2.threshold(blurred, 0, 255, thresh_type + cv2.THRESH_OTSU)
+    thresh_type = cv2.THRESH_BINARY_INV if invert_thresh else cv2.THRESH_BINARY
 
+    if "Otsu" in det_method:
+        _, processed = cv2.threshold(blurred, 0, 255, thresh_type + cv2.THRESH_OTSU)
         if merge:
             k = 3
             kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (k, k))
             processed = cv2.morphologyEx(processed, cv2.MORPH_CLOSE, kernel)
-    else:
+
+    else:  # Canny
         processed = cv2.Canny(blurred, canny_low, canny_high)
         if merge:
             k = max(5, merge_dist)
@@ -485,130 +725,6 @@ def deserialize_parts(parts_s):
         holes = [np.frombuffer(hb, dtype=np.int32).reshape(hs) for hb, hs in p["holes"]]
         parts.append({"outer": outer, "holes": holes})
     return parts
-
-
-def draw_edge_map(base_img, edges, highlights, raw_cnt=None):
-    out = base_img.copy()
-    h_img, w_img = out.shape[:2]
-
-    d_scale = get_drawing_scale(h_img, w_img)
-
-    th_dash = max(1, int(1.5 * d_scale))
-    th_highlight = max(1, int(3 * d_scale))
-    th_badge_outline = max(1, int(2 * d_scale))
-    th_raw_cnt = max(1, int(1.5 * d_scale))
-    dash_len = max(2, int(10 * d_scale))
-    gap_len = max(2, int(10 * d_scale))
-
-    if raw_cnt is not None:
-        cv2.drawContours(out, [raw_cnt], 0, (160, 160, 160), th_raw_cnt, cv2.LINE_AA)
-
-    for i, e in enumerate(edges):
-        if i in highlights:
-            continue
-        p1 = tuple(e["p1"].astype(int))
-        p2 = tuple(e["p2"].astype(int))
-        dist = int(np.linalg.norm(np.array(p2) - np.array(p1)))
-        if dist == 0:
-            continue
-        dx = (p2[0] - p1[0]) / dist
-        dy = (p2[1] - p1[1]) / dist
-        pos = 0
-        drawing = True
-        while pos < dist:
-            seg_end = min(pos + (dash_len if drawing else gap_len), dist)
-            if drawing:
-                sx, sy = int(p1[0] + pos * dx), int(p1[1] + pos * dy)
-                ex, ey = int(p1[0] + seg_end * dx), int(p1[1] + seg_end * dy)
-                cv2.line(out, (sx, sy), (ex, ey), (150, 150, 150), th_dash, cv2.LINE_AA)
-            pos = seg_end
-            drawing = not drawing
-
-    for i, e in enumerate(edges):
-        if i not in highlights:
-            continue
-        p1 = tuple(e["p1"].astype(int))
-        p2 = tuple(e["p2"].astype(int))
-        color_bgr = highlights[i]
-        cv2.line(out, p1, p2, color_bgr, th_highlight, cv2.LINE_AA)
-
-    badge_r_highlight = max(10, int(24 * d_scale))
-    badge_r_normal = max(8, int(20 * d_scale))
-    text_y_offset = int(6 * d_scale)
-
-    fs_edge = max(0.4, 0.7 * d_scale)
-    fs_edge_hi = max(0.4, 0.8 * d_scale)
-    th_edge_text = max(1, int(2 * d_scale))
-
-    for i, e in enumerate(edges):
-        mid = tuple(e["mid"].astype(int))
-        is_hi = i in highlights
-        badge_color = highlights[i] if is_hi else (120, 120, 120)
-        curr_badge_r = badge_r_highlight if is_hi else badge_r_normal
-
-        cv2.circle(out, mid, curr_badge_r, (255, 255, 255), -1)
-        curr_badge_th = th_badge_outline if is_hi else max(1, int(1 * d_scale))
-        cv2.circle(out, mid, curr_badge_r, badge_color, curr_badge_th, cv2.LINE_AA)
-
-        label = str(i + 1)
-        curr_fs = fs_edge_hi if is_hi else fs_edge
-
-        tw = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, curr_fs, th_edge_text)[0][0]
-        cv2.putText(out, label, (mid[0] - tw // 2, mid[1] + text_y_offset),
-                    cv2.FONT_HERSHEY_SIMPLEX, curr_fs, (0, 0, 0), th_edge_text, cv2.LINE_AA)
-
-    return out
-
-
-def draw_legend_cv(cv_img, legend_defs):
-    if not legend_defs:
-        return cv_img
-
-    out = cv_img.copy()
-    h_img, w_img = out.shape[:2]
-    d_scale = get_drawing_scale(h_img, w_img)
-
-    fs = max(0.4, 0.7 * d_scale)
-    th = max(1, int(1.5 * d_scale))
-    pad = max(10, int(20 * d_scale))
-    swatch = max(12, int(25 * d_scale))
-    gap = max(6, int(15 * d_scale))
-    line_spacing = max(6, int(15 * d_scale))
-
-    max_tw = 0
-    max_th = 0
-    for _, txt in legend_defs:
-        (tw, th_txt), _ = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, fs, th)
-        max_tw = max(max_tw, tw)
-        max_th = max(max_th, th_txt)
-
-    row_h = max(swatch, max_th)
-
-    panel_w = pad * 2 + swatch + gap + max_tw
-    panel_h = pad * 2 + (len(legend_defs) * row_h) + ((len(legend_defs) - 1) * line_spacing)
-
-    x0, y0 = max(10, int(20 * d_scale)), max(10, int(20 * d_scale))
-
-    overlay = out.copy()
-    cv2.rectangle(overlay, (x0, y0), (x0 + panel_w, y0 + panel_h), (255, 255, 255), -1)
-    cv2.addWeighted(overlay, 0.85, out, 0.15, 0, out)
-
-    cv2.rectangle(out, (x0, y0), (x0 + panel_w, y0 + panel_h), (100, 100, 100), max(1, int(1 * d_scale)))
-
-    curr_y = y0 + pad
-    for bgr, txt in legend_defs:
-        cv2.rectangle(out, (x0 + pad, curr_y), (x0 + pad + swatch, curr_y + swatch), bgr, -1)
-        cv2.rectangle(out, (x0 + pad, curr_y), (x0 + pad + swatch, curr_y + swatch), (50, 50, 50),
-                      max(1, int(1 * d_scale)))
-
-        (tw, th_txt), _ = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, fs, th)
-        text_y = curr_y + (swatch + th_txt) // 2
-        cv2.putText(out, txt, (x0 + pad + swatch + gap, text_y), cv2.FONT_HERSHEY_SIMPLEX, fs, (0, 0, 0), th,
-                    cv2.LINE_AA)
-
-        curr_y += row_h + line_spacing
-
-    return out
 
 
 def tol_row(label, measured, lo, hi, unit, extra=""):
@@ -692,7 +808,7 @@ def render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol, 
 
     else:  # POLYGON HOLES
         for h_idx, hole_cnt in enumerate(holes):
-            h_edges = get_edges(hole_cnt, angle_merge_tol=angle_merge_tol)
+            h_edges, _ = get_edges(hole_cnt, angle_merge_tol=angle_merge_tol)
             hx, hy, hw, hh = cv2.boundingRect(hole_cnt)
             holes_data.append({
                 "Otvor": f"#{h_idx + 1}",
@@ -719,7 +835,7 @@ def render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol, 
                                  format_func=lambda x: f"Otvor #{x + 1}", key=f"sel_h_{obj_i}_{mode_choice}")
 
         sel_h_cnt = holes[sel_h_idx]
-        sel_h_edges = get_edges(sel_h_cnt, angle_merge_tol=angle_merge_tol)
+        sel_h_edges, sel_sharp_pts = get_edges(sel_h_cnt, angle_merge_tol=angle_merge_tol)
         n_h_edges = len(sel_h_edges)
 
         st.markdown(f"*Detekováno {n_h_edges} hran u Otvoru #{sel_h_idx + 1}. Čísla hran viz náhled.*")
@@ -752,10 +868,11 @@ def render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol, 
                     "angle": e["angle"],
                     "length": e["length"]
                 })
-            shifted_cnt = (sel_h_cnt - np.array([[[x1, y1]]])) * resize_ratio
-            shifted_cnt = np.round(shifted_cnt).astype(np.int32)
 
-            h_cropped = draw_edge_map(h_cropped_base, shifted_edges, {}, raw_cnt=shifted_cnt)
+            shifted_sharp_pts = (sel_sharp_pts - np.array([x1, y1])) * resize_ratio
+            shifted_sharp_pts = np.round(shifted_sharp_pts).astype(np.int32)
+
+            h_cropped = draw_edge_map(h_cropped_base, shifted_edges, {}, sharp_pts=shifted_sharp_pts)
 
             hc_1, hc_2, hc_3 = st.columns([1, 1, 1])
             with hc_2:
@@ -887,6 +1004,9 @@ with st.sidebar:
         with c1: cb_rows = st.number_input("Řádky rohů", 3, 40, 23)
         with c2: cb_cols = st.number_input("Sloupce rohů", 3, 50, 32)
         sq_mm = st.number_input("Čtverec [mm]", 0.1, 100.0, 5.0, step=0.1)
+        st.markdown("---")
+        apply_undistort = st.toggle("Korigovat zkreslení objektivu", value=True,
+                                    help="Narovná sférické zkreslení čočky (Undistort) podle šachovnice.")
 
     with st.expander("Ruční px/mm", expanded=False):
         st.caption("Vlastní kalibrační hodnota")
@@ -894,8 +1014,10 @@ with st.sidebar:
 
     with st.expander("Detekce", expanded=False):
         st.caption("Parametry segmentace a kontur")
-        det_method = st.radio("Metoda segmentace", ["Prahování (Otsu) - plošné", "Hrany (Canny) - liniové"], index=1)
+
+        det_method = st.radio("Metoda segmentace", ["Prahování (Otsu) - plošné", "Hrany (Canny) - liniové"], index=0)
         invert_thresh = st.toggle("Tmavý objekt na světlém pozadí", value=True)
+
         st.markdown("---")
         canny_low = st.slider("Canny spodní", 0, 200, 50)
         canny_high = st.slider("Canny horní", 50, 500, 150)
@@ -956,8 +1078,8 @@ orig_pil = Image.open(io.BytesIO(img_bytes))
 with st.spinner("Detekuji objekty..."):
     img_out_bytes, edge_vis_bytes, parts_s, scale_ratio = detect_objects(
         img_bytes, cam_mtx, dist_c, calib_size, canny_low, canny_high, min_area, max_obj, merge, merge_dist,
-        detect_holes,
-        det_method, invert_thresh, min_hole_area)
+        detect_holes, det_method, invert_thresh, min_hole_area, apply_undistort
+    )
 
 # Ochrana ppm pro různé velikosti obrázků (kdy se liší fotka z telefonu oproti kalibraci)
 if scale_ratio != 1.0 and not (manual_ppm and manual_ppm > 0):
@@ -1009,7 +1131,7 @@ for obj_i, part in enumerate(parts):
 
     rw_mm = max(rw_px, rh_px) / px_per_mm
     rh_mm = min(rw_px, rh_px) / px_per_mm
-    edges = get_edges(cnt, angle_merge_tol=angle_merge_tol)
+    edges, sharp_pts = get_edges(cnt, angle_merge_tol=angle_merge_tol)
     n_edges = len(edges)
 
     # Zjištění předchozího stavu tolerance (aby byl viditelný ihned v nadpisu expanderu)
@@ -1052,7 +1174,7 @@ for obj_i, part in enumerate(parts):
             circ_vis = draw_circle_overlay(base_img, cm, px_per_mm)
             th_cnt = max(1, int(1 * get_drawing_scale(base_img.shape[0], base_img.shape[1])))
             cv2.drawContours(circ_vis, [cnt], 0, (180, 180, 180), th_cnt, cv2.LINE_AA)
-            if holes: draw_holes_with_labels(circ_vis, holes)
+            if holes: draw_holes_with_labels(circ_vis, holes, angle_merge_tol)
 
             c_v1, c_v2, c_v3 = st.columns([1, 1, 1])
             with c_v2:
@@ -1165,10 +1287,12 @@ for obj_i, part in enumerate(parts):
 
             st.markdown("**Vizualizace nalezených hran**")
             preview_highlights = {i: PALETTE[i % len(PALETTE)] for i in range(n_edges)}
-            edge_preview = draw_edge_map(base_img, edges, preview_highlights, raw_cnt=cnt)
+
+            # Předáváme jen ostré body pro dokonalý polygon v náhledu (hrubá šedá linka z findContours zmizí)
+            edge_preview = draw_edge_map(base_img, edges, preview_highlights, sharp_pts=sharp_pts)
             th_rect = max(1, int(1 * get_drawing_scale(base_img.shape[0], base_img.shape[1])))
             cv2.rectangle(edge_preview, (x, y), (x + bw, y + bh), (150, 150, 150), th_rect)
-            if holes: draw_holes_with_labels(edge_preview, holes)
+            if holes: draw_holes_with_labels(edge_preview, holes, angle_merge_tol)
 
             preview_legend = [(PALETTE[i % len(PALETTE)],
                                f"H{i + 1}  {edges[i]['length'] / px_per_mm:.1f} mm  {edges[i]['angle']:.1f} deg") for i
@@ -1285,11 +1409,11 @@ for obj_i, part in enumerate(parts):
                                                       disabled=not cfg["len_en"])
                 if cfg["len_en"]:
                     ie = cfg["len_edge"]
-                    if ie < n_edges:
-                        elen = edges[ie]["length"] / px_per_mm
+                    if ie < len(sel_h_edges):
+                        elen = sel_h_edges[ie]["length"] / px_per_mm
                         lo, hi = cfg["len_nom"] - cfg["len_minus"], cfg["len_nom"] + cfg["len_plus"]
                         ok = lo <= elen <= hi
-                        if not ok: is_nok = True
+                        if not ok: is_holes_nok = True
                         r_md, r_data = tol_row(f"Délka H{ie + 1}", elen, lo, hi, "mm")
                         assign_highlight(ie, HCOLORS["len_e"])
                         rows_html_main.append(r_md);
@@ -1323,8 +1447,9 @@ for obj_i, part in enumerate(parts):
 
             st.markdown("---")
             st.markdown("**Vizualizace vybraných hran hlavního tvaru a děr**")
-            annotated = draw_edge_map(base_img, edges, highlights, raw_cnt=cnt)
-            if holes: draw_holes_with_labels(annotated, holes)
+
+            annotated = draw_edge_map(base_img, edges, highlights, sharp_pts=sharp_pts)
+            if holes: draw_holes_with_labels(annotated, holes, angle_merge_tol)
 
             legend_defs = []
             if cfg["par_en"]:
