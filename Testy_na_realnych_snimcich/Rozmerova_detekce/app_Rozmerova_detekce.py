@@ -57,7 +57,7 @@ def calibrate(img_bytes, rows, cols, square_mm):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
     d_scale = get_drawing_scale(gray.shape[0], gray.shape[1])
-    dot_r = max(3, int(12 * d_scale))
+    dot_r = max(3, int(6 * d_scale))
     dot_th = max(1, int(2 * d_scale))
 
     pattern = (cols, rows)
@@ -95,8 +95,11 @@ def calibrate(img_bytes, rows, cols, square_mm):
         corners_ref = corners_ref / found_scale
 
     h, w = gray.shape
+
+    calib_flags = cv2.CALIB_ZERO_TANGENT_DIST | cv2.CALIB_FIX_K3
+
     _, cam_mtx, dist, rvecs, tvecs = cv2.calibrateCamera(
-        [objp], [corners_ref], (w, h), None, None
+        [objp], [corners_ref], (w, h), None, None, flags=calib_flags
     )
 
     corners_undist = cv2.undistortPoints(corners_ref, cam_mtx, dist, P=cam_mtx)
@@ -350,7 +353,6 @@ def draw_edge_map(base_img, edges, highlights, raw_cnt=None, sharp_pts=None):
     dash_len = max(2, int(10 * d_scale))
     gap_len = max(2, int(10 * d_scale))
 
-    # Proměnné pro velikost fontu přidány zpět!
     fs_edge = max(0.4, 0.7 * d_scale)
     fs_edge_hi = max(0.4, 0.8 * d_scale)
     th_edge_text = max(1, int(2 * d_scale))
@@ -546,14 +548,16 @@ def circle_metrics(cnt, px_per_mm):
     profile = [(math.degrees(float(angles_rad[i])), float(radii[i]) / px_per_mm)
                for i in order]
 
+    # OPRAVA: Převedeno explicitně na standardní float
     return {
-        "cx_px": float(cx), "cy_px": float(cy),
-        "r_fit_mm": r_fit / px_per_mm,
-        "r_max_mm": r_max / px_per_mm,
-        "r_min_mm": r_min / px_per_mm,
-        "r_mean_mm": r_mean / px_per_mm,
-        "dev_mm": (r_max - r_min) / px_per_mm,
-        "roundness_dev": roundness_dev,
+        "cx_px": float(cx),
+        "cy_px": float(cy),
+        "r_fit_mm": float(r_fit / px_per_mm),
+        "r_max_mm": float(r_max / px_per_mm),
+        "r_min_mm": float(r_min / px_per_mm),
+        "r_mean_mm": float(r_mean / px_per_mm),
+        "dev_mm": float((r_max - r_min) / px_per_mm),
+        "roundness_dev": float(roundness_dev),
         "profile": profile,
     }
 
@@ -891,7 +895,7 @@ def render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol, 
             idx_b = min(1, n_h_edges - 1)
 
             with st.container():
-                st.markdown("**Rovnoběžnost uvnitř otvoru**")
+                st.markdown("**Rovnoběžnost**")
                 hpc = st.columns([1, 1, 1, 1])
                 cfg["h_par_en"] = hpc[0].checkbox("Aktivní", key=f"h_par_en_{obj_i}")
                 cfg["h_par_a"] = hpc[1].selectbox("Hrana A", h_nums, idx_a, key=f"h_par_a_{obj_i}",
@@ -912,7 +916,7 @@ def render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol, 
                     export_data_list.append(r_data)
 
             with st.container():
-                st.markdown("**Kolmost uvnitř otvoru**")
+                st.markdown("**Kolmost**")
                 hqc = st.columns([1, 1, 1, 1])
                 cfg["h_perp_en"] = hqc[0].checkbox("Aktivní", key=f"h_perp_en_{obj_i}")
                 cfg["h_perp_a"] = hqc[1].selectbox("Hrana A ", h_nums, idx_a, key=f"h_perp_a_{obj_i}",
@@ -933,7 +937,7 @@ def render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol, 
                     export_data_list.append(r_data)
 
             with st.container():
-                st.markdown("**Libovolný úhel uvnitř otvoru**")
+                st.markdown("**Libovolný úhel**")
                 hac = st.columns([1, 1, 1, 1, 1])
                 cfg["h_ang_en"] = hac[0].checkbox("Aktivní", key=f"h_ang_en_{obj_i}")
                 cfg["h_ang_a"] = hac[1].selectbox("Hrana A  ", h_nums, idx_a, key=f"h_ang_a_{obj_i}",
@@ -989,7 +993,7 @@ def render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol, 
 
 # ─── UI ───────────────────────────────────────────────────────────────────────
 st.title("Rozměrová detekce")
-st.markdown("Interaktivní analýza rozměrů a geometrických tolerancí s adaptivním měřítkem")
+st.markdown("Analýza rozměrů a geometrických tolerancí")
 st.markdown("---")
 
 # ─── Sidebar ──────────────────────────────────────────────────────────────────
@@ -1200,7 +1204,7 @@ for obj_i, part in enumerate(parts):
 
             with tc1:
                 cfg["circ_en"] = st.checkbox("Kruhovitost", value=True, key=f"circ_en_{obj_i}")
-                cfg["circ_min"] = st.number_input("Min. [%]", 0.0, 100.0, 85.0, step=1.0, key=f"circ_min_{obj_i}",
+                cfg["circ_min"] = st.number_input("Min. [%]", 0.0, 100.0, 89.0, step=1.0, key=f"circ_min_{obj_i}",
                                                   disabled=not cfg["circ_en"])
                 if cfg["circ_en"]:
                     ok = circ >= cfg["circ_min"]
@@ -1212,7 +1216,8 @@ for obj_i, part in enumerate(parts):
             with tc2:
                 cfg["diam_en"] = st.checkbox("Průměr", value=True, key=f"diam_en_{obj_i}_diam")
 
-                d_fit = round(cm["r_fit_mm"] * 2, 2)
+                # OPRAVA: Přetypování proměnných d_fit a max_diam_limit na float()
+                d_fit = float(round(cm["r_fit_mm"] * 2, 2))
                 max_diam_limit = float(max(2000.0, d_fit * 2.0))
 
                 cfg["diam_nom"] = st.number_input("Jmenovitý [mm]", 0.0, max_diam_limit, d_fit, step=0.1,
@@ -1232,7 +1237,8 @@ for obj_i, part in enumerate(parts):
             with tc3:
                 cfg["rad_en"] = st.checkbox("Radiální odchylka", value=True, key=f"rad_en_{obj_i}_rad")
 
-                _rad_default = round(cm["dev_mm"] * 1.5 + 0.1, 2)
+                # OPRAVA: Přetypování odchylek
+                _rad_default = float(round(cm["dev_mm"] * 1.5 + 0.1, 2))
                 _rad_max_limit = float(max(100.0, _rad_default * 2.0))
 
                 cfg["rad_max"] = st.number_input("Max. [mm]", 0.0, _rad_max_limit, _rad_default, step=0.05,
@@ -1421,7 +1427,7 @@ for obj_i, part in enumerate(parts):
 
             with st.container():
                 rc = st.columns([1, 1, 1, 1, 1])
-                cfg["straight_en"] = rc[0].checkbox("Přímost (Roztřesenost)", value=False, key=f"straight_en_{obj_i}")
+                cfg["straight_en"] = rc[0].checkbox("Přímost", value=False, key=f"straight_en_{obj_i}")
                 cfg["straight_edge"] = rc[1].selectbox("Zkoumaná hrana ", nums, 0, key=f"straight_edge_{obj_i}",
                                                        disabled=not cfg["straight_en"], format_func=edge_label) - 1
                 cfg["straight_max"] = rc[2].number_input("Max. odchylka [mm]", 0.0, 50.0, 0.5, step=0.1,
