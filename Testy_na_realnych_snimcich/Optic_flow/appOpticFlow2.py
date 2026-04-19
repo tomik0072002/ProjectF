@@ -597,7 +597,7 @@ with tab_vid:
 
         # ── Frame browser ──────────────────────────────────────────────────────
         st.markdown("---")
-        st.markdown("### Detailní prohlížeč zpracovaných segmentů")
+        st.markdown("### Prohlížení segmentů videa")
 
         _ss("vid_slider", 0)
         st.session_state.vid_slider = int(np.clip(st.session_state.vid_slider, 0, n - 1))
