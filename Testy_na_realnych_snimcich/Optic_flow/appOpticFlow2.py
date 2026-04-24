@@ -344,18 +344,23 @@ with tab_img:
         panels_list = [p1, p2, p3, p4]
         panels_label = ["Originál", "Flow mapa (HSV)", "Detekce pohybu", "Vektory pohybu"]
 
-        if enable_heatmap:
-            hm_single = build_heatmap([{"magnitude": magnitude}], frame1.shape)
-            panels_list.append(hm_single)
-            panels_label.append("Heatmapa pohybu")
-
-        cols = st.columns(min(len(panels_list), 4))
+        # Vykreslení prvních 4 panelů
+        cols = st.columns(4)
         for i, (panel, label) in enumerate(zip(panels_list, panels_label)):
-            with cols[i % 4]:
+            with cols[i]:
                 st.markdown(f"**{label}**")
                 st.image(bgr_to_rgb(panel), use_container_width=True)
-            if (i + 1) % 4 == 0 and i + 1 < len(panels_list):
-                cols = st.columns(min(len(panels_list) - i - 1, 4))
+
+        # Samostatné vykreslení heatmapy vycentrované na střed
+        if enable_heatmap:
+            hm_single = build_heatmap([{"magnitude": magnitude}], frame1.shape)
+            st.markdown("<br>", unsafe_allow_html=True)  # Drobná mezera
+            st.markdown("**Heatmapa pohybu**")
+
+            # Tři sloupce v poměru 1:2:1 (vycentruje obrázek)
+            hm_left, hm_mid, hm_right = st.columns([1, 2, 1])
+            with hm_mid:
+                st.image(bgr_to_rgb(hm_single), use_container_width=True)
 
         # ── Export ────────────────────────────────────────────────────────────
         combined = make_combined([p1, p2, p3, p4])
@@ -574,25 +579,30 @@ with tab_vid:
             st.markdown("**Časový průběh intenzity pohybu (magnituda)**")
             st.line_chart(df.set_index("Snímek")[["Průměrná magnituda", "Max. magnituda"]])
 
-        # ── Heatmapa a Export ──────────────────────────────────────────────────
-        st.markdown("---")
-        if heatmap is not None:
-            st.markdown("### Kumulativní heatmapa pohybu")
-            hm_col1, hm_col2 = st.columns([3, 1])
-            with hm_col1:
-                st.image(bgr_to_rgb(heatmap), use_container_width=True)
-            with hm_col2:
-                st.caption(
-                    "Heatmapa agreguje celkový objem pohybu v čase nad sledovaným rozsahem. Světlejší oblasti značí častější výskyt pohybu.")
-                ts_now = datetime.now().strftime("%Y%m%d_%H%M%S")
-                st.download_button(
-                    "Stáhnout heatmapu (.png)",
-                    data=encode_png(heatmap),
-                    file_name=f"heatmapa_{ts_now}.png",
-                    mime="image/png",
-                    use_container_width=True,
-                    key="dl_heatmap",
-                )
+            # ── Heatmapa a Export ──────────────────────────────────────────────────
+            st.markdown("---")
+            if heatmap is not None:
+                st.markdown("### Kumulativní heatmapa pohybu")
+
+                # Vytvoření tří sloupců s poměrem šířek 1 : 2 : 1
+                hm_left, hm_mid, hm_right = st.columns([1, 2, 1])
+
+                with hm_mid:
+                    st.image(bgr_to_rgb(heatmap), use_container_width=True)
+
+                with hm_right:
+                    st.caption(
+                        "Heatmapa agreguje celkový objem pohybu v čase nad sledovaným rozsahem. Světlejší oblasti značí častější výskyt pohybu."
+                    )
+                    ts_now = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    st.download_button(
+                        "Stáhnout heatmapu (.png)",
+                        data=encode_png(heatmap),
+                        file_name=f"heatmapa_{ts_now}.png",
+                        mime="image/png",
+                        use_container_width=True,
+                        key="dl_heatmap",
+                    )
 
 
         # ── Frame browser ──────────────────────────────────────────────────────
@@ -628,7 +638,7 @@ with tab_vid:
 
         # Nativní indikátor střihu a informací (místo HTML/CSS divu)
         is_cut = cur in scene_cuts
-        cut_badge = " 🚨 **[DETEKOVÁN STŘIH]**" if is_cut else ""
+        cut_badge = " **[DETEKOVÁN STŘIH]**" if is_cut else ""
 
         st.info(
             f"**Zobrazen segment:** {cur + 1} / {n} | "
