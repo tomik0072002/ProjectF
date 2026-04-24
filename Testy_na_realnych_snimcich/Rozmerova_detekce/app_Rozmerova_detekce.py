@@ -1097,7 +1097,7 @@ parts = deserialize_parts(parts_s)
 
 col_a, col_b = st.columns(2)
 with col_a:
-    st.markdown("**Originál**")
+    st.markdown("**Originální snímek**")
     st.image(orig_pil, use_container_width=True)
 with col_b:
     st.markdown("**Segmentační mapa**")
