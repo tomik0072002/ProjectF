@@ -236,7 +236,7 @@ def make_histogram_fig(df: pd.DataFrame, unit: str) -> plt.Figure:
     return fig
 
 
-#  Sidebar
+#  Boční panel - sidebar
 
 with st.sidebar:
     st.markdown("##  Ferografie")

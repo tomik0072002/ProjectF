@@ -10,13 +10,13 @@ from datetime import datetime
 import pandas as pd
 from PIL import Image
 
-# Načtení obrázku loga (pokud existuje)
+# Načtení obrázku loga
 script_dir = os.path.dirname(os.path.abspath(__file__))
 logo_path = os.path.join(script_dir, "vut_brno_00.jpg")
 logo = Image.open(logo_path)
 
 
-# ── Page config ───────────────────────────────────────────────────────────────
+# Nastavení stránky
 st.set_page_config(
     page_title="Zpracování obrazu - Optický tok",
     page_icon=logo,
@@ -24,10 +24,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# SESSION STATE INIT
-# ─────────────────────────────────────────────────────────────────────────────
+# Inicializace stavu
 def _ss(key, default):
     if key not in st.session_state:
         st.session_state[key] = default
@@ -43,14 +40,10 @@ _ss("img_frame1", None)
 _ss("img_frame2", None)
 _ss("img_file1_id", None)
 _ss("img_file2_id", None)
-_ss("heatmap_cache", None)  # kumulativní heatmapa
-_ss("scene_cuts", [])  # indexy detekovaných střihů
+_ss("heatmap_cache", None)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CORE FUNCTIONS
-# ─────────────────────────────────────────────────────────────────────────────
-
+# Hlavní funkce
 def compute_flow_dense(gray1, gray2, pyr_scale, levels, winsize, iterations, poly_n, poly_sigma):
     g1 = cv2.GaussianBlur(gray1, (5, 5), 0)
     g2 = cv2.GaussianBlur(gray2, (5, 5), 0)
@@ -141,7 +134,7 @@ def make_panels(frame1_bgr, frame2_bgr, flow, threshold_factor=2.0, arrow_step=2
         "avg_magnitude": float(moving_mags.mean()) if len(moving_mags) > 0 else 0.0,
         "max_magnitude": float(magnitude.max()),
     }
-    return p1, p2, p3, p4, stats, magnitude  # magnitude navíc pro heatmapu
+    return p1, p2, p3, p4, stats, magnitude
 
 
 def build_heatmap(results, ref_shape):
@@ -157,17 +150,6 @@ def build_heatmap(results, ref_shape):
     accum_norm = cv2.normalize(accum, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
     heatmap_bgr = cv2.applyColorMap(accum_norm, cv2.COLORMAP_INFERNO)
     return heatmap_bgr
-
-
-def detect_scene_cuts(results, jump_factor=3.0):
-    """Detekuje náhlé skoky v průměrné magnitudě — potenciální střihy."""
-    if len(results) < 3:
-        return []
-    mags = np.array([r["stats"]["avg_magnitude"] for r in results])
-    diffs = np.abs(np.diff(mags))
-    threshold = np.median(diffs) + jump_factor * np.std(diffs)
-    cuts = [i + 1 for i, d in enumerate(diffs) if d > threshold]
-    return cuts
 
 
 def bgr_to_rgb(img):
@@ -205,9 +187,7 @@ def results_to_dataframe(results):
     return pd.DataFrame(rows)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# SIDEBAR
-# ─────────────────────────────────────────────────────────────────────────────
+# Boční panel - sidebar
 with st.sidebar:
     st.markdown("## Detekce pohybu")
     st.markdown("Analýza optického toku")
@@ -232,12 +212,8 @@ with st.sidebar:
             iterations = st.slider("Iterations", 1, 10, 5)
             poly_n = st.slider("Poly N", 5, 9, 7, 2)
             poly_sigma = st.slider("Poly sigma", 1.0, 2.5, 1.5, 0.1)
-            lk_max_corners = 500;
-            lk_quality = 0.01;
-            lk_min_dist = 7
-            lk_block = 7;
-            lk_winsize = 21;
-            lk_levels = 3
+            lk_max_corners = 500; lk_quality = 0.01; lk_min_dist = 7
+            lk_block = 7; lk_winsize = 21; lk_levels = 3
         else:
             st.caption("Parametry algoritmu Lucas-Kanade")
             lk_max_corners = st.slider("Max. počet rohů", 50, 2000, 500, 50)
@@ -246,12 +222,8 @@ with st.sidebar:
             lk_block = st.slider("Block size", 3, 15, 7, 2)
             lk_winsize = st.slider("LK window size", 5, 51, 21, 2)
             lk_levels = st.slider("LK pyramid levels", 1, 6, 3)
-            pyr_scale = 0.5;
-            levels = 6;
-            winsize = 25
-            iterations = 5;
-            poly_n = 7;
-            poly_sigma = 1.5
+            pyr_scale = 0.5; levels = 6; winsize = 25
+            iterations = 5; poly_n = 7; poly_sigma = 1.5
 
     with st.expander("Detekce a zobrazení pohybu", expanded=False):
         st.caption("Nastavení prahů a vizualizace")
@@ -265,20 +237,13 @@ with st.sidebar:
 
     with st.expander("Pokročilé funkce", expanded=False):
         enable_heatmap = st.checkbox("Generovat kumulativní heatmapu", value=True)
-        enable_scene_det = st.checkbox("Detekce střihů scén", value=True)
-        scene_jump_factor = st.slider("Citlivost detekce střihů", 1.0, 6.0, 3.0, 0.5,
-                                      disabled=not enable_scene_det)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# HEADER
-# ─────────────────────────────────────────────────────────────────────────────
+
 st.title("OPTICKÝ TOK")
-
 tab_img, tab_vid = st.tabs(["ANALÝZA OBRAZŮ", "ANALÝZA VIDEA"])
 
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 1 – IMAGES
-# ══════════════════════════════════════════════════════════════════════════════
+
+# Záložka 1 - obrazy
 with tab_img:
     st.markdown("Nahrajte dva po sobě jdoucí snímky pro detekci pohybu mezi nimi.")
     c1, c2 = st.columns(2)
@@ -337,32 +302,26 @@ with tab_img:
         mc3.metric("Průměrná magnituda", f"{stats['avg_magnitude']:.2f}")
         mc4.metric("Max. magnituda", f"{stats['max_magnitude']:.2f}")
 
-        # ── Výsledkové panely ─────────────────────────────────────────────────
         st.markdown("---")
         st.markdown("### Výsledky analýzy")
 
         panels_list = [p1, p2, p3, p4]
         panels_label = ["Originál", "Flow mapa (HSV)", "Detekce pohybu", "Vektory pohybu"]
 
-        # Vykreslení prvních 4 panelů
         cols = st.columns(4)
         for i, (panel, label) in enumerate(zip(panels_list, panels_label)):
             with cols[i]:
                 st.markdown(f"**{label}**")
                 st.image(bgr_to_rgb(panel), use_container_width=True)
 
-        # Samostatné vykreslení heatmapy vycentrované na střed
         if enable_heatmap:
             hm_single = build_heatmap([{"magnitude": magnitude}], frame1.shape)
-            st.markdown("<br>", unsafe_allow_html=True)  # Drobná mezera
+            st.markdown("<br>", unsafe_allow_html=True)
             st.markdown("**Heatmapa pohybu**")
-
-            # Tři sloupce v poměru 1:2:1 (vycentruje obrázek)
             hm_left, hm_mid, hm_right = st.columns([1, 2, 1])
             with hm_mid:
                 st.image(bgr_to_rgb(hm_single), use_container_width=True)
 
-        # ── Export ────────────────────────────────────────────────────────────
         combined = make_combined([p1, p2, p3, p4])
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         zip_buf = io.BytesIO()
@@ -379,9 +338,7 @@ with tab_img:
         st.download_button("Stáhnout výsledky obrazové analýzy (ZIP)", data=zip_buf,
                            file_name=f"optical_flow_snimky_{ts}.zip", mime="application/zip")
 
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 2 – VIDEO
-# ══════════════════════════════════════════════════════════════════════════════
+# Záložka 2 - video
 with tab_vid:
     st.markdown("**Vstupní soubor**")
     vid_file = st.file_uploader("Video soubor", type=["mp4", "avi", "mov", "mkv", "webm"],
@@ -396,7 +353,6 @@ with tab_vid:
             st.session_state.vid_analyzing = False
             st.session_state.selected_frames = set()
             st.session_state.heatmap_cache = None
-            st.session_state.scene_cuts = []
 
             old = st.session_state.vid_tmp_path
             if old and os.path.exists(old):
@@ -406,8 +362,7 @@ with tab_vid:
                     pass
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
             tmp.write(vid_file.read())
-            tmp.flush();
-            tmp.close()
+            tmp.flush(); tmp.close()
             st.session_state.vid_tmp_path = tmp.name
 
     if vid_file is not None and st.session_state.vid_tmp_path:
@@ -419,11 +374,9 @@ with tab_vid:
         h_vid = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         cap.release()
 
-        # Nativní Streamlit prvek nahrazující původní HTML/CSS
         st.info(
             f"**Načteno video:** {vid_file.name} | **Celkem snímků:** {total} | **Rozlišení:** {w_vid}×{h_vid} | **FPS:** {fps:.1f} | **Délka:** {total / fps:.1f} s")
 
-        # ── Výběr rozsahu ─────────────────────────────────────────────────────
         st.markdown("**Rozsah analýzy**")
         range_col1, range_col2 = st.columns(2)
         with range_col1:
@@ -456,7 +409,6 @@ with tab_vid:
             st.session_state.vid_slider = 0
             st.session_state.selected_frames = set()
             st.session_state.heatmap_cache = None
-            st.session_state.scene_cuts = []
 
             cap = cv2.VideoCapture(tmp_path)
             if start_frame > 0:
@@ -536,18 +488,11 @@ with tab_vid:
             st.session_state.vid_analyzing = False
 
             if results:
-                if enable_heatmap:
-                    st.session_state.heatmap_cache = build_heatmap(results, results[0]["p1"].shape)
-                if enable_scene_det:
-                    st.session_state.scene_cuts = detect_scene_cuts(results, scene_jump_factor)
                 total_time = time.perf_counter() - t_start
                 st.success(f"Analýza dokončena. Zpracováno {len(results)} segmentů za {total_time:.1f} s.")
             st.rerun()
 
-    # ── Results browser ────────────────────────────────────────────────────────
     results = st.session_state.vid_results
-    scene_cuts = st.session_state.scene_cuts
-    heatmap = st.session_state.heatmap_cache
 
     if results and not st.session_state.vid_analyzing:
         n = len(results)
@@ -556,14 +501,12 @@ with tab_vid:
         all_avg_mag = [r["stats"]["avg_magnitude"] for r in results]
         all_max_mag = [r["stats"]["max_magnitude"] for r in results]
 
-        # ── Grafy ─────────────────────────────────────────────────────────────
         st.markdown("### Agregované statistiky")
 
-        sc1, sc2, sc3, sc4 = st.columns(4)
+        sc1, sc2, sc3 = st.columns(3)
         sc1.metric("Průměrné pokrytí", f"{np.mean(all_coverage):.1f} %")
         sc2.metric("Průměrná magnituda", f"{np.mean(all_avg_mag):.2f}")
         sc3.metric("Maximální magnituda", f"{np.max(all_max_mag):.2f}")
-        sc4.metric("Detekované střihy scén", len(scene_cuts))
 
         df = pd.DataFrame({
             "Snímek": frame_indices,
@@ -579,39 +522,12 @@ with tab_vid:
             st.markdown("**Časový průběh intenzity pohybu (magnituda)**")
             st.line_chart(df.set_index("Snímek")[["Průměrná magnituda", "Max. magnituda"]])
 
-            # ── Heatmapa a Export ──────────────────────────────────────────────────
-            st.markdown("---")
-            if heatmap is not None:
-                st.markdown("### Kumulativní heatmapa pohybu")
-
-                # Vytvoření tří sloupců s poměrem šířek 1 : 2 : 1
-                hm_left, hm_mid, hm_right = st.columns([1, 2, 1])
-
-                with hm_mid:
-                    st.image(bgr_to_rgb(heatmap), use_container_width=True)
-
-                with hm_right:
-                    st.caption(
-                        "Heatmapa agreguje celkový objem pohybu v čase nad sledovaným rozsahem. Světlejší oblasti značí častější výskyt pohybu."
-                    )
-                    ts_now = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    st.download_button(
-                        "Stáhnout heatmapu (.png)",
-                        data=encode_png(heatmap),
-                        file_name=f"heatmapa_{ts_now}.png",
-                        mime="image/png",
-                        use_container_width=True,
-                        key="dl_heatmap",
-                    )
-
-
-        # ── Frame browser ──────────────────────────────────────────────────────
+        # Prohlížení snímků
         st.markdown("---")
         st.markdown("### Prohlížení segmentů videa")
 
         _ss("vid_slider", 0)
         st.session_state.vid_slider = int(np.clip(st.session_state.vid_slider, 0, n - 1))
-
 
         def _go(delta=None, absolute=None):
             cur_val = st.session_state.vid_slider
@@ -619,7 +535,6 @@ with tab_vid:
                 st.session_state.vid_slider = absolute
             else:
                 st.session_state.vid_slider = int(np.clip(cur_val + delta, 0, n - 1))
-
 
         nav1, nav2, nav3, nav4, nav5 = st.columns([1, 1, 5, 1, 1])
         with nav1:
@@ -636,15 +551,10 @@ with tab_vid:
         cur = st.session_state.vid_slider
         seg = results[cur]
 
-        # Nativní indikátor střihu a informací (místo HTML/CSS divu)
-        is_cut = cur in scene_cuts
-        cut_badge = " **[DETEKOVÁN STŘIH]**" if is_cut else ""
-
         st.info(
             f"**Zobrazen segment:** {cur + 1} / {n} | "
             f"**Číslo snímku:** {seg['frame_idx']} | "
-            f"**Čas záznamu:** {seg['time_s']:.2f} s "
-            f"{cut_badge}"
+            f"**Čas záznamu:** {seg['time_s']:.2f} s"
         )
 
         info_col, sel_col = st.columns([5, 2])
@@ -652,13 +562,11 @@ with tab_vid:
             is_selected = cur in st.session_state.selected_frames
             label = "✓ Vybráno pro export" if is_selected else "Vybrat pro export"
 
-
             def _toggle_frame(idx):
                 if idx in st.session_state.selected_frames:
                     st.session_state.selected_frames.discard(idx)
                 else:
                     st.session_state.selected_frames.add(idx)
-
 
             st.button(label, key=f"sel_btn_{cur}", on_click=_toggle_frame, kwargs={"idx": cur},
                       use_container_width=True)
@@ -711,10 +619,11 @@ with tab_vid:
         else:
             st.image(bgr_to_rgb(panel_map[view_mode]), use_container_width=True)
 
-        # ── Export ─────────────────────────────────────────────────────
+        # Export
         st.markdown("---")
         st.markdown("### Export")
 
+        ts_now = datetime.now().strftime("%Y%m%d_%H%M%S")
         sel = sorted(st.session_state.selected_frames)
 
         dl1, dl2, dl3 = st.columns(3)
@@ -740,3 +649,15 @@ with tab_vid:
                         zf.writestr(f"frame_{fi_r:05d}_original.png", encode_png(r["p1"]))
                         zf.writestr(f"frame_{fi_r:05d}_flow.png", encode_png(r["p2"]))
                         zf.writestr(f"frame_{fi_r:05d}_pohyb.png", encode_png(r["p3"]))
+                zip_sel.seek(0)
+                st.download_button(
+                    f"Stáhnout vybrané snímky ZIP ({len(sel)})",
+                    data=zip_sel,
+                    file_name=f"optical_flow_vybrane_{ts_now}.zip",
+                    mime="application/zip",
+                    key="dl_sel",
+                    use_container_width=True,
+                )
+            else:
+                st.button("Stáhnout vybrané snímky ZIP (0)", disabled=True, use_container_width=True,
+                          key="dl_sel_disabled")

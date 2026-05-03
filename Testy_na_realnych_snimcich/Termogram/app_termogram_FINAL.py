@@ -253,12 +253,12 @@ def apply_preset(name: str):
     st.session_state["filter_zavaznost"] = CONF_TO_FILTER.get(cm, "Střední a kritické")
 
 
-# Prvotní inicializace
+# Inicializace
 if "sl_alpha" not in st.session_state:
     apply_preset("standard")
     st.session_state["active_preset"] = "Standard"
 
-# Sidebar
+# Boční panel - sidebar
 with st.sidebar:
     st.markdown("### FV Hotspot Detektor")
     st.caption("Demonstrátor zpracování obrazu")
@@ -362,7 +362,6 @@ with st.spinner("Počítám analýzu..."):
 annotated = anotuj(img, hotspoty)
 
 # Pipeline aplikace
-
 st.markdown("---")
 st.header("Vstup a Předzpracování")
 c1, c2 = st.columns(2)

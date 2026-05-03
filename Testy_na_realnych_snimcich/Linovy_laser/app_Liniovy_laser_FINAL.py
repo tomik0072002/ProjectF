@@ -15,7 +15,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 logo_path = os.path.join(script_dir, "vut_brno_00.jpg")
 logo = Image.open(logo_path)
 
-#  Konfigurace stranky
+#  Nastavení stránky
 st.set_page_config(
     page_title="Liniovy laser - analyza skenu",
     page_icon=logo,
@@ -92,6 +92,7 @@ def process_laser_scan(snimky_3d, params, progress_bar=None, status_text=None):
     profiles = []
 
     for i, img in enumerate(snimky_3d):
+
         # Oříznutí (ROI)
         h, w = img.shape[:2]
         ct, cb = params['crop_t'], params['crop_b']
@@ -108,7 +109,7 @@ def process_laser_scan(snimky_3d, params, progress_bar=None, status_text=None):
 
         # Rozostření obrazu (Filtry)
         if params['median_k'] > 1:
-            k = params['median_k'] | 1  # Vždy liché číslo
+            k = params['median_k'] | 1
             signal = cv2.medianBlur(signal, k)
         if params['gauss_sigma'] > 0:
             signal = cv2.GaussianBlur(signal, (0, 0), params['gauss_sigma'])
@@ -188,10 +189,9 @@ def create_figure(depth_map, stats, file_name, colormap):
     fig.patch.set_alpha(0.0)
     fig.suptitle(f"Liniový laser - sken: {file_name}", fontsize=14, fontweight='bold', color='gray')
 
-    # Rozdělíme plátno na 6 sloupců
     gs = gridspec.GridSpec(2, 6, figure=fig, hspace=0.35, wspace=0.60, height_ratios=[2, 1])
 
-    # Panel 1: Depth mapa (zabere sloupce 1 až 4, nultý a pátý zůstanou prázdné = bude užší a vycentrovaná)
+    # Panel 1: Depth mapa
     ax1 = fig.add_subplot(gs[0, 1:5])
     ax1.set_facecolor('none')
     im = ax1.imshow(depth_map, cmap=colormap, interpolation='nearest', aspect='auto', origin='lower')
@@ -207,7 +207,7 @@ def create_figure(depth_map, stats, file_name, colormap):
 
     ax1.set_xlabel("Cislo snimku", fontsize=10, color='gray')
 
-    # Panel 2: Prumerny profil (zabere první 3 sloupce = levá polovina plátna)
+    # Panel 2: Průměrný profil
     ax2 = fig.add_subplot(gs[1, 0:3])
     ax2.set_facecolor('none')
     with_data = np.where(depth_map != 0, depth_map, np.nan)
@@ -223,7 +223,7 @@ def create_figure(depth_map, stats, file_name, colormap):
     for spine in ax2.spines.values():
         spine.set_color('gray')
 
-    # Panel 3: Histogram (zabere poslední 3 sloupce = pravá polovina plátna)
+    # Panel 3: Histogram
     ax3 = fig.add_subplot(gs[1, 3:6])
     ax3.set_facecolor('none')
     if nonzero.size > 0:
@@ -282,7 +282,7 @@ def create_3d_figure(depth_map: np.ndarray, colormap: str, downsample: int = 1) 
     return fig
 
 
-#  Sidebar
+#  Boční panel - sidebar
 
 with st.sidebar:
     st.markdown("## Laserový sken")
@@ -386,7 +386,7 @@ if 'depth_map' not in st.session_state:
     st.session_state.npy_bytes = None
     st.session_state.last_file = None
 
-# Spusteni analyzy
+# Spuštění analýzy
 if run_btn:
     fp = Path(file_path)
     if not fp.exists():
@@ -434,7 +434,6 @@ if run_btn:
                 unsafe_allow_html=True
             )
 
-        # ── Validace ROI ──────────────────────────────────────────────────────
         if len(snimky) > 0:
             h_img, w_img = snimky[0].shape[:2]
             roi_errors = []
@@ -478,7 +477,6 @@ if run_btn:
                 f'</div>',
                 unsafe_allow_html=True
             )
-        # ─────────────────────────────────────────────────────────────────────
 
         params = dict(
             crop_t=crop_t, crop_b=crop_b, crop_l=crop_l, crop_r=crop_r,
@@ -519,7 +517,7 @@ if run_btn:
         npy_buf.seek(0)
         st.session_state.npy_bytes = npy_buf.getvalue()
 
-# Zobrazeni vysledku
+# Zobrazení výsledků
 if st.session_state.depth_map is not None:
     stats = st.session_state.stats
     depth_map = st.session_state.depth_map

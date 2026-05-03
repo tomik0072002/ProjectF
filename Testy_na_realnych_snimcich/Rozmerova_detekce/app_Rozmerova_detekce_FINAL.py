@@ -15,7 +15,7 @@ try:
 except:
     logo = None
 
-# ── Page config ───────────────────────────────────────────────────────────────
+# Nastavení stránky
 st.set_page_config(
     page_title="Rozměrová detekce",
     page_icon=logo,
@@ -37,7 +37,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# ─── Pomocné funkce pro ADAPTIVNÍ MĚŘÍTKO ─────────────────────────────────────
+# Pomocné funkce pro měřítko
 def get_drawing_scale(img_h, img_w, min_scale=0.1):
     """Vypočítá koeficient měřítka přímo úměrný rozlišení obrázku (nebo výřezu)."""
     diagonal = math.sqrt(img_h ** 2 + img_w ** 2)
@@ -49,7 +49,7 @@ def cv_to_pil(bgr):
     return Image.fromarray(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
 
 
-# ─── Calibration ─────────────────────────────────────────────────────────────
+# Kalibrace
 @st.cache_data(show_spinner=False)
 def calibrate(img_bytes, rows, cols, square_mm):
     arr = np.frombuffer(img_bytes, np.uint8)
@@ -125,8 +125,7 @@ def calibrate(img_bytes, rows, cols, square_mm):
     return cam_mtx, dist, ppm, debug, None, (w, h)
 
 
-# ─── Geometry ────────────────────────────────────────────────────────────────
-
+# Geometrie - funkce
 def clean_polygon_vertices(pts, peri, angle_merge_tol=6.0):
     pts = list(pts)
     changed = True
@@ -548,7 +547,6 @@ def circle_metrics(cnt, px_per_mm):
     profile = [(math.degrees(float(angles_rad[i])), float(radii[i]) / px_per_mm)
                for i in order]
 
-    # OPRAVA: Převedeno explicitně na standardní float
     return {
         "cx_px": float(cx),
         "cy_px": float(cy),
@@ -592,7 +590,7 @@ def draw_circle_overlay(base_img, cm, px_per_mm):
     return out
 
 
-# ─── Detection ───────────────────────────────────────────────────────────────
+# Detekce
 @st.cache_data(show_spinner=False)
 def detect_objects(img_bytes, _cam_mtx, _dist, _calib_size, canny_low, canny_high,
                    min_area, max_obj, merge, merge_dist, detect_holes, det_method, invert_thresh, min_hole_area,
@@ -744,7 +742,6 @@ def tol_row(label, measured, lo, hi, unit, extra=""):
     return md, data
 
 
-# --- ROZŠÍŘENÁ ANALÝZA OTVORŮ S OKAMŽITÝM VÝPISEM ---
 def render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol, base_img, export_data_list):
     if len(holes) == 0:
         return False, export_data_list
@@ -810,7 +807,7 @@ def render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol, 
                     rows_html_holes.append(r_md)
                     export_data_list.append(r_data)
 
-    else:  # POLYGON HOLES
+    else:  # Hranaté otvory
         for h_idx, hole_cnt in enumerate(holes):
             h_edges, _ = get_edges(hole_cnt, angle_merge_tol=angle_merge_tol)
             hx, hy, hw, hh = cv2.boundingRect(hole_cnt)
@@ -991,12 +988,12 @@ def render_hole_analysis(obj_i, holes, px_per_mm, mode_choice, angle_merge_tol, 
     return is_holes_nok, export_data_list
 
 
-# ─── UI ───────────────────────────────────────────────────────────────────────
+# Uživatelské rozhraní
 st.title("Rozměrová detekce")
 st.markdown("Analýza rozměrů a geometrických tolerancí")
 st.markdown("---")
 
-# ─── Sidebar ──────────────────────────────────────────────────────────────────
+# Boční panel - sidebar
 with st.sidebar:
     st.markdown("## Nastavení")
     st.markdown("---")
@@ -1036,7 +1033,7 @@ with st.sidebar:
         st.caption("Parametry rozpoznání hran polygonu")
         angle_merge_tol = st.slider("Tolerance úhlu pro slučování hran [°]", 1, 20, 6)
 
-# ─── Calibration ──────────────────────────────────────────────────────────────
+# Kalibrace
 cam_mtx, dist_c, px_per_mm = None, None, None
 calib_size = None
 
@@ -1067,7 +1064,7 @@ if not px_per_mm:
         st.markdown('<div class="info-box">Nahrajte šachovnici nebo zadejte vlastní px/mm. Výchozí: 5.0 px/mm</div>',
                     unsafe_allow_html=True)
 
-# ─── Object upload ────────────────────────────────────────────────────────────
+# Nahrání objektu
 obj_file = st.file_uploader("Snímek měřeného objektu", type=["jpg", "jpeg", "png", "bmp"])
 
 if not obj_file:
@@ -1078,14 +1075,13 @@ obj_file.seek(0)
 img_bytes = obj_file.read()
 orig_pil = Image.open(io.BytesIO(img_bytes))
 
-# ─── Detect ───────────────────────────────────────────────────────────────────
+# Detekce
 with st.spinner("Detekuji objekty..."):
     img_out_bytes, edge_vis_bytes, parts_s, scale_ratio = detect_objects(
         img_bytes, cam_mtx, dist_c, calib_size, canny_low, canny_high, min_area, max_obj, merge, merge_dist,
         detect_holes, det_method, invert_thresh, min_hole_area, apply_undistort
     )
 
-# Ochrana ppm pro různé velikosti obrázků (kdy se liší fotka z telefonu oproti kalibraci)
 if scale_ratio != 1.0 and not (manual_ppm and manual_ppm > 0):
     px_per_mm = px_per_mm * scale_ratio
 
@@ -1115,9 +1111,8 @@ HCOLORS = {
     "len_e": (0, 114, 178), "ang_a": (230, 158, 0), "ang_b": (213, 94, 0), "straight": (0, 0, 255),
 }
 
-# ─── Per-object tabs ──────────────────────────────────────────────────────────
+# Záložky pro hranaté otvory
 
-# Proměnná spouštějící překreslení na konci skriptu
 needs_rerun = False
 
 for obj_i, part in enumerate(parts):
@@ -1138,7 +1133,7 @@ for obj_i, part in enumerate(parts):
     edges, sharp_pts = get_edges(cnt, angle_merge_tol=angle_merge_tol)
     n_edges = len(edges)
 
-    # Zjištění předchozího stavu tolerance (aby byl viditelný ihned v nadpisu expanderu)
+    # Zjištění předchozího stavu tolerance
     prev_nok = st.session_state.get(f"is_nok_{obj_i}", None)
     if prev_nok is None:
         status_badge = "⏳ Počítám..."
@@ -1147,12 +1142,10 @@ for obj_i, part in enumerate(parts):
     else:
         status_badge = "🟢 OK"
 
-    # Z expanderu odebrána proměnná s tvarem a vložen status
     with st.expander(
             f"Objekt #{obj_i + 1}  —  {rw_mm:.1f} × {rh_mm:.1f} mm  |  Stav: {status_badge}",
             expanded=True):
 
-        # Pevně nastaven defaultní tvar na polygon
         mode_choice = st.segmented_control(
             label="", label_visibility="collapsed", options=["polygon", "circle"],
             default="polygon",
@@ -1215,8 +1208,6 @@ for obj_i, part in enumerate(parts):
 
             with tc2:
                 cfg["diam_en"] = st.checkbox("Průměr", value=True, key=f"diam_en_{obj_i}_diam")
-
-                # OPRAVA: Přetypování proměnných d_fit a max_diam_limit na float()
                 d_fit = float(round(cm["r_fit_mm"] * 2, 2))
                 max_diam_limit = float(max(2000.0, d_fit * 2.0))
 
@@ -1236,8 +1227,6 @@ for obj_i, part in enumerate(parts):
 
             with tc3:
                 cfg["rad_en"] = st.checkbox("Radiální odchylka", value=True, key=f"rad_en_{obj_i}_rad")
-
-                # OPRAVA: Přetypování odchylek
                 _rad_default = float(round(cm["dev_mm"] * 1.5 + 0.1, 2))
                 _rad_max_limit = float(max(100.0, _rad_default * 2.0))
 
@@ -1294,7 +1283,7 @@ for obj_i, part in enumerate(parts):
             st.markdown("**Vizualizace nalezených hran**")
             preview_highlights = {i: PALETTE[i % len(PALETTE)] for i in range(n_edges)}
 
-            # Předáváme jen ostré body pro dokonalý polygon v náhledu (hrubá šedá linka z findContours zmizí)
+            # Jen ostré body pro dokonalý polygon v náhledu
             edge_preview = draw_edge_map(base_img, edges, preview_highlights, sharp_pts=sharp_pts)
             th_rect = max(1, int(1 * get_drawing_scale(base_img.shape[0], base_img.shape[1])))
             cv2.rectangle(edge_preview, (x, y), (x + bw, y + bh), (150, 150, 150), th_rect)
