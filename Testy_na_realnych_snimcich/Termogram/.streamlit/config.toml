@@ -1,7 +1,4 @@
-[server]
-# Okamžitě ukončit bez čekání na cleanup
-headless = false
-
-[runner]
-# Zkrátit timeout na minimum
-fastReruns = true
+[theme]
+# Základní režim (může být "light" pro světlý nebo "dark" pro tmavý)
+base="dark"
+primaryColor="#0068c9"
