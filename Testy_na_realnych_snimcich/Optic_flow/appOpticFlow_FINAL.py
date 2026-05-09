@@ -40,7 +40,6 @@ _ss("img_frame1", None)
 _ss("img_frame2", None)
 _ss("img_file1_id", None)
 _ss("img_file2_id", None)
-_ss("heatmap_cache", None)
 
 
 # Hlavní funkce
@@ -125,7 +124,7 @@ def make_panels(frame1_bgr, frame2_bgr, flow, threshold_factor=2.0, arrow_step=2
                     speed_norm = min(magnitude[y, x] / max(motion_threshold * 2, 1e-6), 1.0)
                     t = speed_norm * 2 if speed_norm < 0.5 else (speed_norm - 0.5) * 2
                     color = (int(255 * (1 - t)), 255, int(255 * t)) if speed_norm < 0.5 else (0, int(255 * (1 - t)),
-                                                                                              255)
+                                                                                                255)
                     cv2.arrowedLine(p4, (x, y), end, color, 2, tipLength=0.3, line_type=cv2.LINE_AA)
 
     stats = {
@@ -135,21 +134,6 @@ def make_panels(frame1_bgr, frame2_bgr, flow, threshold_factor=2.0, arrow_step=2
         "max_magnitude": float(magnitude.max()),
     }
     return p1, p2, p3, p4, stats, magnitude
-
-
-def build_heatmap(results, ref_shape):
-    """Kumulativní heatmapa pohybu přes všechny zpracované framy."""
-    h, w = ref_shape[:2]
-    accum = np.zeros((h, w), dtype=np.float32)
-    for r in results:
-        mag = r.get("magnitude")
-        if mag is None:
-            continue
-        resized = cv2.resize(mag, (w, h))
-        accum += resized
-    accum_norm = cv2.normalize(accum, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-    heatmap_bgr = cv2.applyColorMap(accum_norm, cv2.COLORMAP_INFERNO)
-    return heatmap_bgr
 
 
 def bgr_to_rgb(img):
@@ -235,9 +219,6 @@ with st.sidebar:
         video_step = st.slider("Analyzovat každý N-tý snímek", 1, 10, 1)
         max_frames = st.slider("Maximální počet zpracovaných snímků", 10, 500, 100)
 
-    with st.expander("Pokročilé funkce", expanded=False):
-        enable_heatmap = st.checkbox("Generovat kumulativní heatmapu", value=True)
-
 
 st.title("OPTICKÝ TOK")
 tab_img, tab_vid = st.tabs(["ANALÝZA OBRAZŮ", "ANALÝZA VIDEA"])
@@ -314,14 +295,6 @@ with tab_img:
                 st.markdown(f"**{label}**")
                 st.image(bgr_to_rgb(panel), use_container_width=True)
 
-        if enable_heatmap:
-            hm_single = build_heatmap([{"magnitude": magnitude}], frame1.shape)
-            st.markdown("<br>", unsafe_allow_html=True)
-            st.markdown("**Heatmapa pohybu**")
-            hm_left, hm_mid, hm_right = st.columns([1, 2, 1])
-            with hm_mid:
-                st.image(bgr_to_rgb(hm_single), use_container_width=True)
-
         combined = make_combined([p1, p2, p3, p4])
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         zip_buf = io.BytesIO()
@@ -329,8 +302,6 @@ with tab_img:
             for panel, lbl in zip([p1, p2, p3, p4],
                                   ["original", "flow_mapa", "pohyb_oblasti", "sipky"]):
                 zf.writestr(f"{ts}_{lbl}.png", encode_png(panel))
-            if enable_heatmap:
-                zf.writestr(f"{ts}_heatmapa.png", encode_png(hm_single))
             zf.writestr(f"{ts}_combined.png", encode_png(combined))
         zip_buf.seek(0)
         st.markdown("---")
@@ -352,7 +323,6 @@ with tab_vid:
             st.session_state.vid_slider = 0
             st.session_state.vid_analyzing = False
             st.session_state.selected_frames = set()
-            st.session_state.heatmap_cache = None
 
             old = st.session_state.vid_tmp_path
             if old and os.path.exists(old):
@@ -408,7 +378,6 @@ with tab_vid:
             st.session_state.vid_results = None
             st.session_state.vid_slider = 0
             st.session_state.selected_frames = set()
-            st.session_state.heatmap_cache = None
 
             cap = cv2.VideoCapture(tmp_path)
             if start_frame > 0:
