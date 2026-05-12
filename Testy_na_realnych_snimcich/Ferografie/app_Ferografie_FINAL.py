@@ -15,7 +15,7 @@ logo_path = os.path.join(script_dir, "vut_brno_00.jpg")
 try:
     logo = Image.open(logo_path)
 except FileNotFoundError:
-    logo = None  # Ošetření pro případ, že logo není k dispozici
+    logo = None
 
 # Nastavení stránky
 st.set_page_config(
