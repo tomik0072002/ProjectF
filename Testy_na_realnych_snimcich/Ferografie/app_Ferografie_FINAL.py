@@ -12,9 +12,12 @@ from PIL import Image
 # Načtení obrázku loga
 script_dir = os.path.dirname(os.path.abspath(__file__))
 logo_path = os.path.join(script_dir, "vut_brno_00.jpg")
-logo = Image.open(logo_path)
+try:
+    logo = Image.open(logo_path)
+except FileNotFoundError:
+    logo = None  # Ošetření pro případ, že logo není k dispozici
 
-#  Nastavení stránky
+# Nastavení stránky
 st.set_page_config(
     page_title="Ferografie – Analýza částic",
     page_icon=logo,
@@ -23,7 +26,7 @@ st.set_page_config(
 )
 
 
-#  Pomocné funkce pro detekci hran a částic
+# Pomocné funkce pro detekci hran a částic
 def auto_canny_thresholds(blurred: np.ndarray, sigma: float = 0.33):
     p_low = np.percentile(blurred, 10)
     p_high = np.percentile(blurred, 90)
@@ -236,19 +239,41 @@ def make_histogram_fig(df: pd.DataFrame, unit: str) -> plt.Figure:
     return fig
 
 
-#  Boční panel - sidebar
-
+# Boční panel - sidebar
 with st.sidebar:
-    st.markdown("##  Ferografie")
+    st.markdown("## Ferografie")
+    st.markdown("---")
+
+    st.markdown("### Testovací snímky")
+
+    testovaci_soubory = ["test_fero_01.png", "test_fero_02.png", "test_fero_03.png"]
+
+    nalezeno_snimku = False
+    for img_name in testovaci_soubory:
+        img_path = os.path.join(script_dir, img_name)
+        if os.path.exists(img_path):
+            nalezeno_snimku = True
+            with open(img_path, "rb") as file:
+                st.download_button(
+                    label=f"Stáhnout {img_name}",
+                    data=file,
+                    file_name=img_name,
+                    mime="image/png",
+                    use_container_width=True
+                )
+
+    if not nalezeno_snimku:
+        st.warning("Testovací snímky nebyly na serveru nalezeny.")
+
     st.markdown("---")
 
     uploaded_file = st.file_uploader(
-        " Nahrát snímek (PNG / JPG)",
+        "Nahrát snímek (PNG / JPG)",
         type=["png", "jpg", "jpeg"]
     )
 
     st.markdown("---")
-    st.markdown("###  Kalibrace")
+    st.markdown("### Kalibrace")
     px_per_mm = st.number_input(
         "Rozlišení (px / mm)",
         min_value=0.1, max_value=50000.0,
@@ -257,14 +282,14 @@ with st.sidebar:
     unit = st.selectbox("Jednotka výstupu", ["mm", "µm"], index=0)
 
     st.markdown("---")
-    st.markdown("###  Předzpracování obrazu")
+    st.markdown("### Předzpracování obrazu")
     brightness = st.slider("Jas (Brightness)", -100, 100, 0, 5)
     contrast = st.slider("Kontrast (Contrast)", 0.5, 3.0, 1.0, 0.1)
     blur_kernel = st.slider("Gaussovo rozostření (px)", 1, 15, 5, 2,
                             help="Vyšší hodnota odstraní šum, ale může smazat drobné částice.")
 
     st.markdown("---")
-    st.markdown("###  Canny – detekce hran")
+    st.markdown("### Canny – detekce hran")
     canny_auto = st.toggle("Automatické prahy", value=True)
     if canny_auto:
         canny_sigma = st.slider(
@@ -277,16 +302,16 @@ with st.sidebar:
         canny_t1 = st.slider("Canny T1 (dolní práh)", 0, 254, 10)
         canny_t2 = st.slider("Canny T2 (horní práh)", canny_t1 + 1, 255, 100)
 
-    st.markdown("###  Dilatace (propojení hran)")
+    st.markdown("### Dilatace (propojení hran)")
     dilate_kernel = st.slider("Velikost kernelu dilatace (px)", 3, 25, 9, 2)
     dilate_iter = st.slider("Počet iterací dilatace", 1, 5, 2)
 
-    st.markdown("###  Čištění masky")
+    st.markdown("### Čištění masky")
     clean_kernel = st.slider("Velikost kernelu čištění (px)", 1, 11, 3, 2)
     clean_iter = st.slider("Počet iterací čištění", 1, 5, 2)
 
     st.markdown("---")
-    st.markdown("###  Filtrace částic")
+    st.markdown("### Filtrace částic")
     min_area_mm2 = st.number_input(
         "Minimální plocha (mm²)",
         min_value=0.0001, max_value=100.0,
@@ -296,19 +321,19 @@ with st.sidebar:
                                 help="0 = všechny tvary, 1 = pouze dokonalé kruhy")
 
     st.markdown("---")
-    st.markdown("###  Zobrazení")
+    st.markdown("### Zobrazení")
     show_mask = st.toggle("Zobrazit masku", value=True)
     show_table = st.toggle("Zobrazit tabulku dat", value=True)
     show_histograms = st.toggle("Zobrazit histogramy", value=True)
     highlight_max = st.toggle("Zvýraznit maxima v tabulce", value=True)
-    show_debug = st.toggle(" Mezikroky výsledné masky", value=False)
+    show_debug = st.toggle("Mezikroky výsledné masky", value=False)
 
-#  Hlavní obsah aplikace
+# Hlavní obsah aplikace
 
-st.title(" Analýza ferografických snímků")
+st.title("Analýza ferografických snímků")
 
 if uploaded_file is None:
-    st.info("  Nahrajte snímek v levém panelu pro zahájení analýzy.")
+    st.info("Nahrajte snímek v levém panelu pro zahájení analýzy.")
     st.stop()
 
 
@@ -346,10 +371,10 @@ def cached_analysis(img_bytes: bytes, params_key: str):
 img_bytes = uploaded_file.getvalue()
 params_key = json.dumps(params, sort_keys=True)
 
-with st.spinner(" Zpracovávám obraz…"):
+with st.spinner("Zpracovávám obraz…"):
     adjusted_img, annotated, mask, df, used_t1, used_t2 = cached_analysis(img_bytes, params_key)
 
-st.markdown("###  Přehled výsledků")
+st.markdown("### Přehled výsledků")
 m1, m2, m3, m4, m5, m6 = st.columns(6)
 
 n = len(df)
@@ -398,7 +423,7 @@ else:
 st.markdown("---")
 
 if show_debug:
-    st.markdown("###  Mezikroky vytvoření výsledné masky")
+    st.markdown("### Mezikroky vytvoření výsledné masky")
     gray_img = cv2.cvtColor(adjusted_img, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray_img, (params["blur_kernel"], params["blur_kernel"]), 0)
     canny_dbg = cv2.Canny(blurred, used_t1, used_t2)
@@ -423,14 +448,14 @@ if show_debug:
     st.markdown("---")
 
 if show_histograms and n > 0:
-    st.markdown("###  Distribuce")
+    st.markdown("### Distribuce")
     hist_fig = make_histogram_fig(df, unit)
     st.pyplot(hist_fig, use_container_width=True, clear_figure=True)
     plt.close(hist_fig)
     st.markdown("---")
 
 if show_table:
-    st.markdown(f"###  Naměřená data  `{n} částic`")
+    st.markdown(f"### Naměřená data  `{n} částic`")
     if n > 0:
         num_cols = [c for c in df.columns if c != "ID"]
         styled = df.style.format({c: "{:.4f}" for c in num_cols})
@@ -438,11 +463,11 @@ if show_table:
             styled = styled.highlight_max(subset=num_cols, color="rgba(249, 115, 22, 0.3)")
         st.dataframe(styled, use_container_width=True, height=420)
     else:
-        st.warning(" Žádné částice nebyly detekovány. Zkuste upravit parametry v sidebaru.")
+        st.warning("Žádné částice nebyly detekovány. Zkuste upravit parametry v sidebaru.")
 
 st.markdown("---")
 
-st.markdown("###  Export výsledků")
+st.markdown("### Export výsledků")
 e1, e2, e3, e4 = st.columns(4)
 
 fname = uploaded_file.name.rsplit(".", 1)[0]
