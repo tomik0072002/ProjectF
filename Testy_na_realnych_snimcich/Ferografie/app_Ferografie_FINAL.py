@@ -326,7 +326,7 @@ with st.sidebar:
     show_table = st.toggle("Zobrazit tabulku dat", value=True)
     show_histograms = st.toggle("Zobrazit histogramy", value=True)
     highlight_max = st.toggle("Zvýraznit maxima v tabulce", value=True)
-    show_debug = st.toggle("Mezikroky výsledné masky", value=False)
+    show_debug = st.toggle("Mezikroky výsledné masky", value=True)
 
 # Hlavní obsah aplikace
 
