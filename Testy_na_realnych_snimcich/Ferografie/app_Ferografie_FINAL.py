@@ -375,7 +375,7 @@ with st.spinner("Zpracovávám obraz…"):
     adjusted_img, annotated, mask, df, used_t1, used_t2 = cached_analysis(img_bytes, params_key)
 
 st.markdown("### Přehled výsledků")
-m1, m2, m3, m4, m5, m6 = st.columns(6)
+m1, m2, m3, m4, m5 = st.columns(6)
 
 n = len(df)
 m1.metric("Celkem částic", n)
@@ -386,11 +386,10 @@ if n > 0:
     m3.metric(f"Medián ekv. Ø ({unit})", f"{df[ecol].median():.2f}")
     m4.metric(f"Průměr plochy ({unit}²)", f"{df[acol].mean():.2f}")
     m5.metric("Průměr kruhovitosti", f"{df['Kruhovitost'].mean():.2f}")
-    m6.metric("Canny T1 / T2", f"{used_t1} / {used_t2}")
 else:
     for col, lbl in zip([m2, m3, m4, m5, m6],
                         [f"Průměr ekv. Ø ({unit})", f"Medián ekv. Ø ({unit})", f"Průměr plochy ({unit}²)",
-                         "Průměr kruhovitosti", "Canny T1 / T2"]):
+                         "Průměr kruhovitosti"]):
         col.metric(lbl, "—")
 
 st.markdown("---")
