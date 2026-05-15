@@ -17,17 +17,17 @@ ret, thresh = cv2.threshold(img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 fig, axs = plt.subplots(1, 3, figsize=(12, 4))
 
 axs[0].imshow(img, cmap='gray')
-axs[0].set_title("Vstup", fontsize=24)
+axs[0].set_title("Vstup", fontsize=20)
 axs[0].axis('off')
 
 axs[1].hist(img.ravel(), 256)
 axs[1].axvline(ret, color='r', linestyle='dashed', linewidth=2)
-axs[1].set_title(f"Histogram a Otsu práh ({int(ret)})", fontsize=24)
-axs[1].set_xlabel("Intenzita pixelu")
-axs[1].set_ylabel("Počet pixelů")
+axs[1].set_title(f"Histogram a Otsu práh ({int(ret)})", fontsize=20)
+axs[1].set_xlabel("Intenzita pixelu", fontsize=12)
+axs[1].set_ylabel("Počet pixelů", fontsize=12)
 
 axs[2].imshow(thresh, cmap='gray')
-axs[2].set_title("Výsledek segmentace", fontsize=24)
+axs[2].set_title("Výsledek segmentace", fontsize=20)
 axs[2].axis('off')
 
 plt.tight_layout()
