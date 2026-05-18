@@ -10,12 +10,12 @@ import io
 import time
 from PIL import Image
 
-# Načtení obrázku loga
+# Načtení loga VUT
 script_dir = os.path.dirname(os.path.abspath(__file__))
 logo_path = os.path.join(script_dir, "vut_brno_00.jpg")
 logo = Image.open(logo_path)
 
-#  Nastavení stránky
+# Nastavení stránky
 st.set_page_config(
     page_title="Liniovy laser - analyza skenu",
     page_icon=logo,
@@ -23,24 +23,9 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-#  Vzhled stranky
-st.markdown("""
-<style>
-.info-box {
-    background: rgba(128, 128, 128, 0.1);
-    border: 1px solid rgba(128, 128, 128, 0.2);
-    border-radius: 4px;
-    padding: 12px 16px;
-    font-size: 0.8rem;
-    margin: 8px 0;
-}
-</style>
-""", unsafe_allow_html=True)
+# Funkce pro zpracování obrazu
 
-
-#  Funkce pro zpracovani obrazu
-
-def extract_laser_signal(img: np.ndarray, channel: str = 'GRAY') -> np.ndarray:
+def take_laser_signal(img: np.ndarray, channel: str = 'GRAY') -> np.ndarray: # Funkce pro extrakci laserového signálu
     if img.ndim == 2:
         img_f = img.astype(np.float32)
         img_min, img_max = img_f.min(), img_f.max()
@@ -48,6 +33,7 @@ def extract_laser_signal(img: np.ndarray, channel: str = 'GRAY') -> np.ndarray:
             return ((img_f - img_min) / (img_max - img_min) * 255).astype(np.uint8)
         return np.zeros_like(img, dtype=np.uint8)
 
+    # Kanály laseru
     if channel == 'RG':
         return cv2.subtract(img[:, :, 2], img[:, :, 1])
     elif channel == 'R':
@@ -56,11 +42,9 @@ def extract_laser_signal(img: np.ndarray, channel: str = 'GRAY') -> np.ndarray:
         return img[:, :, 1].copy()
     elif channel == 'GRAY':
         return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    else:
-        raise ValueError(f"Nezname channel: '{channel}'")
 
-
-def get_laser_center_subpixel(img_slice: np.ndarray, threshold: int, peak_window: int) -> float:
+# Fukce pro získání středu laserové čáry
+def laser_center(img_slice: np.ndarray, threshold: int, peak_window: int) -> float:
     vals = img_slice.astype(float)
     max_idx = int(np.argmax(vals))
     max_val = vals[max_idx]
@@ -73,27 +57,27 @@ def get_laser_center_subpixel(img_slice: np.ndarray, threshold: int, peak_window
     total = w_vals.sum()
     return float(np.dot(w_idxs, w_vals) / total) if total > 0 else np.nan
 
-
-def get_laser_profile(signal_2d, threshold, peak_window, axis):
+# Získání profilu laseru
+def laser_profile(signal_2d, threshold, peak_window, axis):
     if axis == 0:
         return np.array([
-            get_laser_center_subpixel(signal_2d[y, :], threshold, peak_window)
+            laser_center(signal_2d[y, :], threshold, peak_window)
             for y in range(signal_2d.shape[0])
         ])
     else:
         return np.array([
-            get_laser_center_subpixel(signal_2d[:, x], threshold, peak_window)
+            laser_center(signal_2d[:, x], threshold, peak_window)
             for x in range(signal_2d.shape[1])
         ])
 
-
-def process_laser_scan(snimky_3d, params, progress_bar=None, status_text=None):
+# Upravení skenu
+def edit_laser_scan(snimky_3d, params, progress_bar=None, status_text=None):
     n = len(snimky_3d)
     profiles = []
 
     for i, img in enumerate(snimky_3d):
 
-        # Oříznutí (ROI)
+        # Oříznutí
         h, w = img.shape[:2]
         ct, cb = params['crop_t'], params['crop_b']
         cl, cr = params['crop_l'], params['crop_r']
@@ -105,28 +89,28 @@ def process_laser_scan(snimky_3d, params, progress_bar=None, status_text=None):
             img_cropped = cv2.convertScaleAbs(img_cropped, alpha=params['alpha'], beta=params['beta'])
 
         # Extrakce kanálu
-        signal = extract_laser_signal(img_cropped, params['channel'])
+        signal = take_laser_signal(img_cropped, params['channel'])
 
-        # Rozostření obrazu (Filtry)
+        # Rozostření obrazu
         if params['median_k'] > 1:
             k = params['median_k'] | 1
             signal = cv2.medianBlur(signal, k)
         if params['gauss_sigma'] > 0:
             signal = cv2.GaussianBlur(signal, (0, 0), params['gauss_sigma'])
 
-        # Morfologie 2D
+        # Morfologie
         if params['morph_k'] > 1:
             k_size = params['morph_k'] | 1
             kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (k_size, k_size))
-            if params['morph_op'] == 'Otevření (odstraní šum)':
+            if params['morph_op'] == 'Otevření':
                 signal = cv2.morphologyEx(signal, cv2.MORPH_OPEN, kernel)
-            elif params['morph_op'] == 'Uzavření (spojí čáru)':
+            elif params['morph_op'] == 'Uzavření':
                 signal = cv2.morphologyEx(signal, cv2.MORPH_CLOSE, kernel)
-            elif params['morph_op'] == 'Dilatace (ztloustnutí)':
+            elif params['morph_op'] == 'Dilatace':
                 signal = cv2.dilate(signal, kernel, iterations=1)
 
         # Extrakce profilu
-        profile_cropped = get_laser_profile(signal, params['threshold'], params['peak_window'], params['laser_axis'])
+        profile_cropped = laser_profile(signal, params['threshold'], params['peak_window'], params['laser_axis'])
 
         if params['laser_axis'] == 0:
             full_len = h
@@ -149,11 +133,11 @@ def process_laser_scan(snimky_3d, params, progress_bar=None, status_text=None):
             if status_text:
                 status_text.text(f"Zpracovávám snímek {i + 1} / {n}...")
 
-    #  Post-processing Hloubkové mapy
+    #  2D mapy
     depth_map = np.array(profiles).T
     depth_map = np.nan_to_num(depth_map, nan=0.0)
 
-    # Vyhlazení Depth mapy
+    # Vyhlazení 2D mapy
     if params['smooth_kernel'] > 1:
         k = params['smooth_kernel'] | 1
         depth_map = cv2.medianBlur(depth_map.astype(np.float32), k)
@@ -172,17 +156,13 @@ def process_laser_scan(snimky_3d, params, progress_bar=None, status_text=None):
     stats = {
         "n_snimku": n,
         "shape": depth_map.shape,
-        "validnich_bodu": int(nonzero.size),
         "pokryti_pct": round(100 * nonzero.size / depth_map.size, 1),
-        "min": round(float(nonzero.min()), 2) if nonzero.size else 0,
-        "max": round(float(nonzero.max()), 2) if nonzero.size else 0,
-        "mean": round(float(nonzero.mean()), 2) if nonzero.size else 0,
-        "std": round(float(nonzero.std()), 2) if nonzero.size else 0,
+
     }
 
     return depth_map, stats
 
-
+# Vytváření 2D vizualizace
 def create_figure(depth_map, stats, file_name, colormap):
     nonzero = depth_map[depth_map != 0]
     fig = plt.figure(figsize=(16, 12))
@@ -191,7 +171,7 @@ def create_figure(depth_map, stats, file_name, colormap):
 
     gs = gridspec.GridSpec(2, 6, figure=fig, hspace=0.35, wspace=0.60, height_ratios=[2, 1])
 
-    # Panel 1: Depth mapa
+    # Hloubková mapa
     ax1 = fig.add_subplot(gs[0, 1:5])
     ax1.set_facecolor('none')
     im = ax1.imshow(depth_map, cmap=colormap, interpolation='nearest', aspect='auto', origin='lower')
@@ -207,52 +187,14 @@ def create_figure(depth_map, stats, file_name, colormap):
 
     ax1.set_xlabel("Cislo snimku", fontsize=10, color='gray')
 
-    # Panel 2: Průměrný profil
-    ax2 = fig.add_subplot(gs[1, 0:3])
-    ax2.set_facecolor('none')
-    with_data = np.where(depth_map != 0, depth_map, np.nan)
-    mean_profile = np.nanmean(with_data, axis=1)
-    y_pos = np.arange(len(mean_profile))
-    ax2.plot(mean_profile, y_pos, color='#ff6b6b', linewidth=1.2)
-    ax2.fill_betweenx(y_pos, mean_profile, alpha=0.15, color='#ff6b6b')
-    ax2.set_title("Průměrný profil laseru", fontsize=11, color='gray', pad=8)
-    ax2.set_xlabel("Stred laseru [px]", fontsize=10, color='gray')
-    ax2.set_ylabel("Pozice na senzoru [px]", fontsize=10, color='gray')
-    ax2.tick_params(colors='gray')
-    ax2.grid(True, alpha=0.15, linestyle='--', color='gray')
-    for spine in ax2.spines.values():
-        spine.set_color('gray')
-
-    # Panel 3: Histogram
-    ax3 = fig.add_subplot(gs[1, 3:6])
-    ax3.set_facecolor('none')
-    if nonzero.size > 0:
-        ax3.hist(nonzero.ravel(), bins=60, color='#cc3344', edgecolor='gray', linewidth=0.4, alpha=0.85)
-        ax3.axvline(stats['mean'], color='#ffaa44', lw=1.5, ls='--', label=f"Průměr = {stats['mean']}")
-        ax3.axvline(stats['mean'] - stats['std'], color='#44cc88', lw=1.0, ls=':',
-                    label=f"+- směrodatná odchylka = {stats['std']}")
-        ax3.axvline(stats['mean'] + stats['std'], color='#44cc88', lw=1.0, ls=':')
-        ax3.legend(fontsize=9, framealpha=0.2)
-    ax3.set_title("Histogram hodnot", fontsize=11, color='gray', pad=8)
-    ax3.set_xlabel("Hodnota [px]", fontsize=10, color='gray')
-    ax3.set_ylabel("Počet bodů", fontsize=10, color='gray')
-    ax3.tick_params(colors='gray')
-    ax3.grid(True, alpha=0.15, linestyle='--', color='gray')
-    for spine in ax3.spines.values():
-        spine.set_color('gray')
-
     return fig
 
-
-def create_3d_figure(depth_map: np.ndarray, colormap: str, downsample: int = 1) -> go.Figure:
+# Vytvoření 3D vizualizace
+def create_3D_figure(depth_map: np.ndarray, colormap: str, downsample: int = 1) -> go.Figure:
     dm = depth_map[::downsample, ::downsample].copy()
     dm_plot = np.where(dm == 0, np.nan, dm)
 
-    cmap_map = {
-        'magma': 'Magma', 'viridis': 'Viridis', 'plasma': 'Plasma',
-        'jet': 'Jet', 'inferno': 'Inferno', 'gray': 'Gray',
-    }
-    plotly_cmap = cmap_map.get(colormap, 'Magma')
+    plotly_cmap = colormap.capitalize()
 
     rows, cols = dm_plot.shape
     x = np.arange(cols) * downsample
@@ -278,11 +220,9 @@ def create_3d_figure(depth_map: np.ndarray, colormap: str, downsample: int = 1) 
         ),
         height=650,
     )
-
     return fig
 
-
-#  Boční panel - sidebar
+# Boční panel - sidebar
 
 with st.sidebar:
     st.markdown("## Laserový sken")
@@ -295,11 +235,9 @@ with st.sidebar:
         )
         frame_start = st.number_input(
             "Od snímku", min_value=0, value=0, step=1,
-            help="Index prvního snímku, který se použije (0 = začátek)."
         )
         frame_end = st.number_input(
             "Do snímku", min_value=0, value=0, step=1,
-            help="Index posledního snímku (včetně). Hodnota 0 = použij všechny do konce."
         )
 
     with st.expander("Oříznutí obrazu (ROI)", expanded=False):
@@ -308,7 +246,7 @@ with st.sidebar:
             "Hodnoty jsou v pixelech od příslušného okraje snímku."
         )
 
-        st.markdown("**Osa: Pozice na senzoru** (výška snímku)")
+        st.markdown("**Osa: Pozice na senzoru**")
         crop_t = st.number_input(
             "Od dolního okraje [px]", min_value=0, value=0, step=10, key="crop_t"
         )
@@ -329,35 +267,30 @@ with st.sidebar:
         alpha = st.slider("Kontrast (Alpha)", 0.5, 1.4, 1.0, 0.1)
         beta = st.slider("Jas (Beta)", -100, 100, 0, 5)
         st.markdown("---")
-        median_k = st.slider("Medián filtr (Kernel)", 1, 15, 1, 2, help="1 = Vypnuto")
-        gauss_sigma = st.slider("Gaussovo rozostření (Sigma)", 0.0, 5.0, 0.0, 0.5, help="0 = Vypnuto")
+        median_k = st.slider("Medián filtr (Kernel)", 1, 15, 1, 2)
+        gauss_sigma = st.slider("Gaussovo rozostření (Sigma)", 0.0, 5.0, 0.0, 0.5)
         st.markdown("---")
-        morph_op = st.selectbox("Morfologická operace",
-                                ['Žádná', 'Otevření (odstraní šum)', 'Uzavření (spojí čáru)', 'Dilatace (ztloustnutí)'])
-        morph_k = st.slider("Velikost morfologie (Kernel)", 1, 15, 3, 2,
-                            help="Aktivní pouze pokud vyberete operaci") if morph_op != 'Žádná' else 1
+        morph_op = st.selectbox("Morfologická operace", ['Žádná', 'Otevření', 'Uzavření', 'Dilatace'])
+        morph_k = st.slider("Velikost morfologie (Kernel)", 1, 15, 3, 2) if morph_op != 'Žádná' else 1
 
     with st.expander("Detekce laseru", expanded=False):
         st.caption("Parametry pro nalezení středu čáry")
-        laser_axis = st.selectbox("Osa laseru", options=[0, 1],
-                                  format_func=lambda x: "0 - Horizontálně" if x == 0 else "1 - Vertikálně")
+        laser_axis = st.selectbox("Osa laseru", options=[0, 1], format_func=lambda x: "0 - Horizontálně" if x == 0 else "1 - Vertikálně")
         channel = st.selectbox("Kanál signálu", options=['GRAY', 'RG', 'R', 'G'])
         threshold = st.slider("Práh (Min. jas)", 0, 70, 10, 5)
-        peak_window = st.slider("Prohledávací okno [px]", 1, 50, 10, 1,
-                                help="Šířka okolí maxima pro výpočet těžiště")
+        peak_window = st.slider("Prohledávací okno [px]", 1, 50, 10, 1, help="Velikost okolí pro výpočet středu laseru")
 
     with st.expander("Post-processing", expanded=False):
-        smooth_kernel = st.slider("Vyhlazení povrchu (Medián)", 1, 15, 1, 2, help="1 = Vypnuto")
+        smooth_kernel = st.slider("Vyhlazení povrchu (Medián)", 1, 15, 1, 2)
         outlier_sigma = st.slider("Filtrace odchylek (Sigma)", 0.0, 6.0, 0.0, 0.5,
-                                  help="0 = Vypnuto. Odstraní body mimo N*směrodatná odchylka")
+                                  help="Odstraní body mimo N*směrodatná odchylka")
 
     st.markdown("---")
 
     # Vizualizace
     st.markdown("**Vizualizace**")
-    colormap = st.selectbox("Barvová mapa", ['magma', 'viridis', 'plasma', 'jet', 'inferno', 'gray'])
-    downsample_3d = st.select_slider("Rozlišení 3D vizualizace", options=[1, 2, 4, 8], value=2,
-                                     help="Vyšší hodnota = plynulejší 3D model, ale menší detail")
+    colormap = st.selectbox("Barevná mapa", ['magma', 'viridis', 'plasma', 'jet', 'inferno', 'gray'])
+    downsample_3d = st.select_slider("Rozlišení 3D vizualizace", options=[1, 2, 4, 8], value=2, help="Vyšší hodnota = menší detaily")
 
     st.markdown("---")
     save_npy = st.checkbox("Uložit depth mapu ke stažení (.npy)", value=True)
@@ -366,19 +299,17 @@ with st.sidebar:
 #  Hlavni panel
 st.title("Zpracování skenu")
 
-# Vstupní soubor a tlačítko na hlavní stránce
+# Vstupní soubor
 input_col, btn_col = st.columns([4, 1])
 with input_col:
-    file_path = st.text_input("Cesta k souboru (.npy)", value="./OUT/kamera_251.npy",
-                              label_visibility="collapsed",
-                              placeholder="Cesta k souboru (.npy)")
+    file_path = st.text_input("Cesta k souboru (.npy)", value="./OUT/kamera_251.npy", label_visibility="collapsed", placeholder="Cesta k souboru (.npy)")
 with btn_col:
     run_btn = st.button("SPUSTIT ANALÝZU", use_container_width=True)
 
 file_name = Path(file_path).stem.replace("kamera_", "") if file_path else "?"
 st.markdown(f"**Soubor:** `{file_path}`")
 
-# Stav session
+# Stav
 if 'depth_map' not in st.session_state:
     st.session_state.depth_map = None
     st.session_state.stats = None
@@ -405,15 +336,6 @@ if run_btn:
                 st.error(f"Chyba při načítání souboru: {e}")
                 st.stop()
 
-        st.markdown(
-            f'<div class="info-box">'
-            f'Načteno {len(snimky)} snímků &nbsp;|&nbsp; '
-            f'Rozlišení: {snimky.shape} &nbsp;|&nbsp; '
-            f'Dtype: {snimky.dtype}'
-            f'</div>',
-            unsafe_allow_html=True
-        )
-
         # Ořez rozsahu snímků
         fs = int(frame_start)
         fe = int(frame_end) + 1 if int(frame_end) > 0 else len(snimky)
@@ -421,62 +343,16 @@ if run_btn:
         if fs >= fe:
             st.error(
                 f"Neplatný rozsah snímků: od {fs} do {fe - 1}. "
-                f"'Od snímku' musí být menší než 'Do snímku'."
             )
             st.stop()
-        snimky = snimky[fs:fe]
-        if fs > 0 or int(frame_end) > 0:
-            st.markdown(
-                f'<div class="info-box">'
-                f'Použit rozsah snímků: {fs} – {fe - 1} &nbsp;|&nbsp; '
-                f'Zpracováno: {len(snimky)} snímků'
-                f'</div>',
-                unsafe_allow_html=True
-            )
 
         if len(snimky) > 0:
             h_img, w_img = snimky[0].shape[:2]
             roi_errors = []
 
-            if crop_t + crop_b >= h_img:
-                roi_errors.append(
-                    f"Ořez **shora** ({crop_t} px) + **zdola** ({crop_b} px) = "
-                    f"{crop_t + crop_b} px ≥ výška snímku ({h_img} px). "
-                    f"Po ořezu by nezůstal žádný řádek."
-                )
-            if crop_l + crop_r >= w_img:
-                roi_errors.append(
-                    f"Ořez **zleva** ({crop_l} px) + **zprava** ({crop_r} px) = "
-                    f"{crop_l + crop_r} px ≥ šířka snímku ({w_img} px). "
-                    f"Po ořezu by nezůstal žádný sloupec."
-                )
-
-            if roi_errors:
-                for err in roi_errors:
-                    st.error(f"Neplatné ROI: {err}")
-                st.stop()
-
             roi_h = h_img - crop_t - crop_b
             roi_w = w_img - crop_l - crop_r
             min_roi_px = 10
-
-            if roi_h < min_roi_px or roi_w < min_roi_px:
-                st.error(
-                    f"ROI je příliš malé: výsledná oblast by měla pouze "
-                    f"**{roi_w} × {roi_h} px** (minimum je {min_roi_px} × {min_roi_px} px). "
-                    f"Zmenšete hodnoty ořezu."
-                )
-                st.stop()
-
-            st.markdown(
-                f'<div class="info-box">'
-                f'ROI: <strong>{roi_w} × {roi_h} px</strong> &nbsp;|&nbsp; '
-                f'Původní rozlišení snímku: {w_img} × {h_img} px &nbsp;|&nbsp; '
-                f'Ořez — shora: {crop_t} px, zdola: {crop_b} px, '
-                f'zleva: {crop_l} px, zprava: {crop_r} px'
-                f'</div>',
-                unsafe_allow_html=True
-            )
 
         params = dict(
             crop_t=crop_t, crop_b=crop_b, crop_l=crop_l, crop_r=crop_r,
@@ -493,7 +369,7 @@ if run_btn:
         status_text = st.empty()
         t0 = time.time()
 
-        depth_map, stats = process_laser_scan(snimky, params, progress_bar, status_text)
+        depth_map, stats = edit_laser_scan(snimky, params, progress_bar, status_text)
 
         elapsed = time.time() - t0
         progress_bar.empty()
@@ -523,15 +399,11 @@ if st.session_state.depth_map is not None:
     depth_map = st.session_state.depth_map
     fname = st.session_state.last_file
 
-    st.markdown("### Statistické hodnoty")
+    st.markdown("#### Statistické hodnoty")
 
     c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.metric("Snímků", stats['n_snimku'])
+    c1.metric("Počet snímků", stats['n_snimku'])
     c2.metric("Pokrytí", f"{stats['pokryti_pct']} %")
-    c3.metric("Min [px]", stats['min'])
-    c4.metric("Max [px]", stats['max'])
-    c5.metric("Průměr [px]", stats['mean'])
-    c6.metric("Std [px]", stats['std'])
 
     st.markdown("---")
 
@@ -543,7 +415,7 @@ if st.session_state.depth_map is not None:
 
     st.markdown("### 3D Vizualizace")
     with st.spinner("Generuji 3D graf..."):
-        fig3d = create_3d_figure(depth_map, colormap, downsample=downsample_3d)
+        fig3d = create_3D_figure(depth_map, colormap, downsample=downsample_3d)
     st.plotly_chart(fig3d, use_container_width=True)
     st.markdown(
         '<div class="info-box">'
