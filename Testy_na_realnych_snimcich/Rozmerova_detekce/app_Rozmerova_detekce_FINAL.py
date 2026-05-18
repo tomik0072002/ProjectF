@@ -10,10 +10,7 @@ import os
 # Načtení obrázku loga
 script_dir = os.path.dirname(os.path.abspath(__file__))
 logo_path = os.path.join(script_dir, "vut_brno_00.jpg")
-try:
-    logo = Image.open(logo_path)
-except:
-    logo = None
+logo = Image.open(logo_path)
 
 # Nastavení stránky
 st.set_page_config(
@@ -23,110 +20,99 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.markdown("""
-<style>
-.info-box {
-    background: rgba(128, 128, 128, 0.1);
-    border: 1px solid rgba(128, 128, 128, 0.2);
-    border-radius: 4px;
-    padding: 12px 16px;
-    font-size: 0.8rem;
-    margin: 8px 0;
-}
-</style>
-""", unsafe_allow_html=True)
-
-
-# Pomocné funkce pro měřítko
+# Měřítko pro vykreslovéní
 def get_drawing_scale(img_h, img_w, min_scale=0.1):
-    """Vypočítá koeficient měřítka přímo úměrný rozlišení obrázku (nebo výřezu)."""
     diagonal = math.sqrt(img_h ** 2 + img_w ** 2)
     reference_diag = 1500.0
     return max(min_scale, diagonal / reference_diag)
-
 
 def cv_to_pil(bgr):
     return Image.fromarray(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
 
 
-# Kalibrace
-@st.cache_data(show_spinner=False)
-def calibrate(img_bytes, rows, cols, square_mm):
-    arr = np.frombuffer(img_bytes, np.uint8)
-    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+class CalibrationError(Exception):
+    pass
 
-    d_scale = get_drawing_scale(gray.shape[0], gray.shape[1])
-    dot_r = max(3, int(6 * d_scale))
-    dot_th = max(1, int(2 * d_scale))
-
-    pattern = (cols, rows)
-    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
-    objp = np.zeros((rows * cols, 3), np.float32)
-    objp[:, :2] = np.mgrid[0:cols, 0:rows].T.reshape(-1, 2) * square_mm
-
+# Kalibrace kamery > bylo problémové > využívají se tři velikosti, tři varianty předzpracování a tři detektory
+def find_chessboard(gray, pattern):
     flags_list = [
         cv2.CALIB_CB_ADAPTIVE_THRESH + cv2.CALIB_CB_NORMALIZE_IMAGE,
         cv2.CALIB_CB_ADAPTIVE_THRESH + cv2.CALIB_CB_NORMALIZE_IMAGE + cv2.CALIB_CB_FILTER_QUADS,
         0,
     ]
-    ret, corners, used_gray, found_scale = False, None, gray, 1.0
-    for scale in [1.0, 0.75, 0.5]:
-        h, w = gray.shape
-        gs = cv2.resize(gray, (int(w * scale), int(h * scale))) if scale != 1.0 else gray
-        for pre in [gs, cv2.equalizeHist(gs), cv2.GaussianBlur(gs, (5, 5), 0)]:
+    h, w = gray.shape
+    for scale in (1.0, 0.75, 0.5):
+        gs = gray if scale == 1.0 else cv2.resize(gray, (int(w * scale), int(h * scale)))
+        for pre in (gs, cv2.equalizeHist(gs), cv2.GaussianBlur(gs, (5, 5), 0)):
             for fl in flags_list:
                 ret, corners = cv2.findChessboardCorners(pre, pattern, fl)
                 if ret:
-                    used_gray, found_scale = gs, scale
-                    break
-            if ret:
-                break
-        if ret:
-            break
+                    return corners, gs, scale
+    return None, None, None
 
-    if not ret:
-        return None, None, None, None, "Rohy šachovnice nebyly nalezeny.", None
+# Vzdálenost bodů na šachovnici v pixelech
+def space_between_px(pts, rows, cols):
+    grid = pts.reshape(rows, cols, 2)
+    dx = np.linalg.norm(np.diff(grid, axis=1), axis=2).mean()
+    dy = np.linalg.norm(np.diff(grid, axis=0), axis=2).mean()
+    return (dx + dy) / 2.0
 
-    corners_ref = cv2.cornerSubPix(
-        used_gray, corners.astype(np.float32), (11, 11), (-1, -1), criteria
-    )
-    if found_scale != 1.0:
-        corners_ref = corners_ref / found_scale
-
-    h, w = gray.shape
-
-    calib_flags = cv2.CALIB_ZERO_TANGENT_DIST | cv2.CALIB_FIX_K3
-
-    _, cam_mtx, dist, rvecs, tvecs = cv2.calibrateCamera(
-        [objp], [corners_ref], (w, h), None, None, flags=calib_flags
-    )
-
-    corners_undist = cv2.undistortPoints(corners_ref, cam_mtx, dist, P=cam_mtx)
-    pts = corners_undist.reshape(-1, 2)
-
-    dx, dy = [], []
-    for r in range(rows):
-        for c in range(cols - 1):
-            i = r * cols + c
-            dx.append(np.linalg.norm(pts[i + 1] - pts[i]))
-    for r in range(rows - 1):
-        for c in range(cols):
-            i = r * cols + c
-            dy.append(np.linalg.norm(pts[i + cols] - pts[i]))
-    ppm = ((np.mean(dx) + np.mean(dy)) / 2.0) / square_mm
+# Šachovnice s vyznačenými rohy
+def anotato_chessboard(img, pts, cam_mtx, dist):
+    d_scale = get_drawing_scale(*img.shape[:2])
+    dot_r = max(3, int(6 * d_scale))
+    dot_th = max(1, int(2 * d_scale))
+    n = len(pts)
 
     debug = cv2.undistort(img, cam_mtx, dist, None, cam_mtx)
     for i, (cx, cy) in enumerate(pts):
-        color = (int(255 * i / len(pts)), int(255 * (1 - i / len(pts))), 180)
+        color = (int(255 * i / n), int(255 * (1 - i / n)), 180)
         cv2.circle(debug, (int(cx), int(cy)), dot_r, color, -1)
         cv2.circle(debug, (int(cx), int(cy)), dot_r, (255, 255, 255), dot_th)
+    return debug
+
+# Kalibrace - hlavní kalibrační funkce
+@st.cache_data(show_spinner=False)
+def calibrate(img_bytes, rows, cols, square_mm):
+    img = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape
+    pattern = (cols, rows)
+
+    # Hledání rohů
+    corners, used_gray, scale = find_chessboard(gray, pattern)
+    if corners is None:
+        return None, None, None, None, "Rohy šachovnice nebyly nalezeny.", None
+
+    # Zpřesnění
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
+    corners = cv2.cornerSubPix(used_gray, corners.astype(np.float32),
+                               (11, 11), (-1, -1), criteria)
+    if scale != 1.0:
+        corners = corners / scale
+
+    # Kalibrace kamery
+    objp = np.zeros((rows * cols, 3), np.float32)
+    objp[:, :2] = np.mgrid[0:cols, 0:rows].T.reshape(-1, 2) * square_mm
+    calib_flags = cv2.CALIB_ZERO_TANGENT_DIST | cv2.CALIB_FIX_K3
+    _, cam_mtx, dist, _, _ = cv2.calibrateCamera(
+        [objp], [corners], (w, h), None, None, flags=calib_flags
+    )
+
+    # Výpočet px/mm
+    pts = cv2.undistortPoints(corners, cam_mtx, dist, P=cam_mtx).reshape(-1, 2)
+    ppm = space_between_px(pts, rows, cols) / square_mm
+
+    # Vizualizace šachovnice s body
+    debug = anotato_chessboard(img, pts, cam_mtx, dist)
 
     return cam_mtx, dist, ppm, debug, None, (w, h)
 
 
 # Geometrie - funkce
-def clean_polygon_vertices(pts, peri, angle_merge_tol=6.0):
+
+# Zpřesnění rohů polynomů > bylo to nutné protože se objevují deformace v rozích děr (1. vyčistí se nalezený polynom, 2. každý bod kontury se přadí jedné z hran, 3. Z každé hrany vezme 80% prostředních bodů a rohy odfiltruje, 4. Body proloží přímkou, 5. Vytvoří průniky přímek > rohové body)
+def poly_ver(pts, peri, angle_merge_tol=6.0):
     pts = list(pts)
     changed = True
     min_len_px = max(3.0, 0.015 * peri)
@@ -164,10 +150,9 @@ def clean_polygon_vertices(pts, peri, angle_merge_tol=6.0):
                     break
     return np.array(pts)
 
-
-def fit_sharp_corners(cnt_pts, rough_pts, peri, angle_merge_tol):
-    """Proloží matematické přímky středy stěn a najde jejich dokonalý průsečík (ignoruje rohy)."""
-    rough_pts = clean_polygon_vertices(rough_pts, peri, angle_merge_tol)
+# Rohy
+def corners(cnt_pts, rough_pts, peri, angle_merge_tol):
+    rough_pts = poly_ver(rough_pts, peri, angle_merge_tol)
     n_edges = len(rough_pts)
     if n_edges < 3:
         return rough_pts
@@ -252,7 +237,7 @@ def fit_sharp_corners(cnt_pts, rough_pts, peri, angle_merge_tol):
 
     return np.array(sharp_pts, dtype=np.float32)
 
-
+# Získání hran ze snímku
 def get_edges(cnt, angle_merge_tol=6.0):
     peri = cv2.arcLength(cnt, True)
     area = cv2.contourArea(cnt)
@@ -280,7 +265,7 @@ def get_edges(cnt, angle_merge_tol=6.0):
     pts = approx.reshape(-1, 2).astype(np.float32)
 
     if raw_circ < 0.75:
-        pts = fit_sharp_corners(cnt.reshape(-1, 2).astype(np.float32), pts, peri, angle_merge_tol)
+        pts = corners(cnt.reshape(-1, 2).astype(np.float32), pts, peri, angle_merge_tol)
 
     n = len(pts)
     raw_edges = []
@@ -296,7 +281,7 @@ def get_edges(cnt, angle_merge_tol=6.0):
 
     return raw_edges, pts
 
-
+# Vizualizace nalezených děr
 def draw_holes_with_labels(out, holes, angle_merge_tol):
     h_img, w_img = out.shape[:2]
     d_scale = get_drawing_scale(h_img, w_img)
@@ -338,7 +323,7 @@ def draw_holes_with_labels(out, holes, angle_merge_tol):
         cv2.putText(out, label, (cx - tw // 2, cy + text_y_offset),
                     cv2.FONT_HERSHEY_SIMPLEX, fs, (0, 0, 0), th, cv2.LINE_AA)
 
-
+# Vykrelení mapy hran
 def draw_edge_map(base_img, edges, highlights, raw_cnt=None, sharp_pts=None):
     out = base_img.copy()
     h_img, w_img = out.shape[:2]
@@ -416,7 +401,7 @@ def draw_edge_map(base_img, edges, highlights, raw_cnt=None, sharp_pts=None):
 
     return out
 
-
+# Legenda s popisy
 def draw_legend_cv(cv_img, legend_defs):
     if not legend_defs:
         return cv_img
@@ -590,7 +575,7 @@ def draw_circle_overlay(base_img, cm, px_per_mm):
     return out
 
 
-# Detekce
+# Detekce objektů
 @st.cache_data(show_spinner=False)
 def detect_objects(img_bytes, _cam_mtx, _dist, _calib_size, canny_low, canny_high,
                    min_area, max_obj, merge, merge_dist, detect_holes, det_method, invert_thresh, min_hole_area,
