@@ -6,39 +6,59 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import streamlit as st
-from typing import Dict, Optional, Any
+from typing import Any
 from PIL import Image
 
-# Načtení obrázku loga
+# Načtení loga VUT
 script_dir = os.path.dirname(os.path.abspath(__file__))
 logo_path = os.path.join(script_dir, "vut_brno_00.jpg")
-try:
-    logo = Image.open(logo_path)
-except FileNotFoundError:
-    logo = None
+logo = Image.open(logo_path)
 
 # Nastavení stránky
 st.set_page_config(
-    page_title="Ferografie – Analýza částic",
+    page_title="Liniovy laser - analyza skenu",
     page_icon=logo,
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 
-# Pomocné funkce pro detekci hran a částic
-def auto_canny_thresholds(blurred: np.ndarray, sigma: float = 0.33):
+# Pomocné funkce
+
+# Automatické prahy pro Cannyho hranový detektor
+def auto_canny_thresholds(blurred: np.ndarray, sigma: float = 0.33) -> tuple[int, int]:
+
     p_low = np.percentile(blurred, 10)
     p_high = np.percentile(blurred, 90)
+
     t1 = int(max(0, p_low * (1.0 - sigma)))
     t2 = int(min(255, p_high * (1.0 - sigma)))
 
+    # Zajistíme minimální odstup mezi prahy
     t1 = min(t1, 50)
     t2 = max(t2, t1 + 30)
     t2 = min(t2, 200)
+
     return t1, t2
 
+def create_canny_edges(blurred: np.ndarray, canny_auto: bool, t1: int, t2: int, sigma: float) -> tuple[np.ndarray, int, int]:
+    if canny_auto:
+        t1, t2 = auto_canny_thresholds(blurred, sigma)
+    edges = cv2.Canny(blurred, t1, t2)
+    return edges, t1, t2
 
+# Morfoilogické operace
+def morf_operate(edges: np.ndarray, kernel_size: int, iterations: int) -> np.ndarray:
+
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+    dilated = cv2.dilate(edges, k, iterations=iterations)
+
+    contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    filled = np.zeros_like(edges)
+    cv2.drawContours(filled, contours, -1, 255, thickness=cv2.FILLED)
+    return filled
+
+# Binární maska pro detekované částice
 def get_mask(img: np.ndarray,
              blur_kernel: int,
              canny_auto: bool,
@@ -49,84 +69,86 @@ def get_mask(img: np.ndarray,
              dilate_iter: int,
              clean_kernel: int,
              clean_iter: int) -> tuple[np.ndarray, int, int]:
+
+    # Převod do stupňů šedi
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (blur_kernel, blur_kernel), 0)
 
-    if canny_auto:
-        t1, t2 = auto_canny_thresholds(blurred, canny_sigma)
-    else:
-        t1, t2 = canny_t1, canny_t2
+    # Detekce hran a morfologické operace (dilatace + vyplnění)
+    canny_edges, used_t1, used_t2 = create_canny_edges(
+        blurred, canny_auto, canny_t1, canny_t2, canny_sigma
+    )
+    edge_filled = morf_operate(canny_edges, dilate_kernel, dilate_iter)
 
-    canny = cv2.Canny(blurred, t1, t2)
+    # Otsuovo prahování
+    _, otsu_mask = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
-    k_conn = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dilate_kernel, dilate_kernel))
-    dilated = cv2.dilate(canny, k_conn, iterations=dilate_iter)
+    # Kombinace obou masek přes logické OR
+    combined = cv2.bitwise_or(edge_filled, otsu_mask)
 
-    contours_c, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    edges = np.zeros_like(gray)
-    cv2.drawContours(edges, contours_c, -1, 255, thickness=cv2.FILLED)
-
-    _, mask_otsu = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-
-    combined = cv2.bitwise_or(edges, mask_otsu)
-
+    # Morfologické čištění
     k_clean = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (clean_kernel, clean_kernel))
-    final = cv2.morphologyEx(combined, cv2.MORPH_OPEN, k_clean, iterations=clean_iter)
+    final_mask = cv2.morphologyEx(combined, cv2.MORPH_OPEN, k_clean, iterations=clean_iter)
 
-    return final, t1, t2
+    return final_mask, used_t1, used_t2
 
 
-def analyze_shape(contour: np.ndarray,
+# Analýza tvarů nalezených částic
+
+def analyze_shape_of_particle(contour: np.ndarray,
                   min_area_px: float,
-                  px_per_mm: float) -> Optional[Dict[str, Any]]:
+                  px_per_mm: float) -> dict[str, Any]:
+
     area_px = cv2.contourArea(contour)
     if area_px < min_area_px:
         return None
 
     rect = cv2.minAreaRect(contour)
-    center, (w, h), _ = rect
+    _, (w, h), _ = rect
     length_px = max(w, h)
     width_px = min(w, h)
-    ar = length_px / width_px if width_px > 0 else 0
+
 
     perimeter = cv2.arcLength(contour, True)
-    circularity = (4 * np.pi * area_px) / (perimeter ** 2) if perimeter > 0 else 0
+    circularity = (4 * np.pi * area_px) / (perimeter ** 2) if perimeter > 1e-6 else 0.0
 
     hull = cv2.convexHull(contour)
     hull_area = cv2.contourArea(hull)
-    convexity = area_px / hull_area if hull_area > 0 else 0
+    convexity = area_px / hull_area if hull_area > 1e-6 else 0.0
 
     equiv_diam_px = np.sqrt(4 * area_px / np.pi)
 
-    def px2(p): return p / px_per_mm
+    scale = 1.0 / px_per_mm          # px → mm
+    scale2 = scale ** 2               # px² → mm²
 
-    def px2_area(p): return p / (px_per_mm ** 2)
+    center = rect[0]
 
     return {
         "area_px": area_px,
-        "area_mm2": px2_area(area_px),
-        "length_mm": px2(length_px),
-        "width_mm": px2(width_px),
-        "equiv_diam_mm": px2(equiv_diam_px),
-        "ar": ar,
-        "circularity": circularity,
-        "convexity": convexity,
+        "area_mm2": area_px * scale2,
+        "length_mm": length_px * scale,
+        "width_mm": width_px * scale,
+        "equiv_diam_mm": equiv_diam_px * scale,
+        "circularity": min(circularity, 1.0),
+        "ar": length_px / width_px if width_px > 0 else 0.0,
         "rect": rect,
         "center": center,
     }
 
 
-def run_analysis(img, params):
-    alpha = params["contrast"]
-    beta = params["brightness"]
-    adjusted_img = cv2.convertScaleAbs(img, alpha=alpha, beta=beta)
+# Hlavní analýza/výpočet
 
+def run_analysis(img: np.ndarray, params: dict):
+
+    # Úprava jasu a kontrastu
+    adjusted = cv2.convertScaleAbs(img, alpha=params["contrast"], beta=params["brightness"])
+
+    # Převod px na mm
     px_per_mm = params["px_per_mm"]
-    min_area_px = params["min_area_mm2"] * (px_per_mm ** 2)
-    min_circularity = params["min_circularity"]
+    min_area_px = params["min_area_mm2"] * px_per_mm ** 2
 
     mask, t1, t2 = get_mask(
-        adjusted_img,
+        adjusted,
         blur_kernel=params["blur_kernel"],
         canny_auto=params["canny_auto"],
         canny_t1=params["canny_t1"],
@@ -138,21 +160,22 @@ def run_analysis(img, params):
         clean_iter=params["clean_iter"],
     )
 
+    # Hledání kontur částic v binární masce
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     contours = sorted(contours, key=cv2.contourArea, reverse=True)
 
-    annotated = adjusted_img.copy()
-    data_list = []
+    # Anotace nalezených částic
+    annotated = adjusted.copy()
+    rows = []
     u = params["unit"]
 
-    for i, cnt in enumerate(contours):
-        s = analyze_shape(cnt, min_area_px, px_per_mm)
-
-        if s is None or s["circularity"] < min_circularity:
+    for cnt in contours:
+        s = analyze_shape_of_particle(cnt, min_area_px, px_per_mm)
+        if s is None or s["circularity"] < params["min_circularity"]:
             continue
 
-        pid = len(data_list) + 1
-        data_list.append({
+        pid = len(rows) + 1
+        rows.append({
             "ID": pid,
             f"Plocha ({u}²)": round(s["area_mm2"], 4),
             f"Délka ({u})": round(s["length_mm"], 3),
@@ -160,9 +183,9 @@ def run_analysis(img, params):
             f"Ekv. průměr ({u})": round(s["equiv_diam_mm"], 3),
             "Poměr stran": round(s["ar"], 2),
             "Kruhovitost": round(s["circularity"], 3),
-            "Konvexnost": round(s["convexity"], 3),
         })
 
+        # Červený obrys částice + zelený obdélník
         cv2.drawContours(annotated, [cnt], -1, (0, 0, 255), 1)
         box = np.int64(cv2.boxPoints(s["rect"]))
         cv2.drawContours(annotated, [box], 0, (0, 255, 0), 2)
@@ -170,28 +193,25 @@ def run_analysis(img, params):
         cv2.putText(annotated, str(pid), (cx, cy),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1, cv2.LINE_AA)
 
-    df = pd.DataFrame(data_list)
-    return adjusted_img, annotated, mask, df, t1, t2
+    return adjusted, annotated, mask, pd.DataFrame(rows), t1, t2
 
 
-def fig_to_png_bytes(fig) -> bytes:
+# Převod OpenCV obrazu do PNG pro export
+def to_image(img: np.ndarray) -> bytes:
+    ok, buf = cv2.imencode(".png", img)
+    if not ok:
+        raise RuntimeError("Nepodařilo se zakódovat obraz do PNG.")
+    return buf.tobytes()
+
+# Převod grafu do PNG pro export
+def fig_to_png(fig: plt.Figure) -> bytes:
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=150, bbox_inches="tight", transparent=True)
     buf.seek(0)
     return buf.read()
 
-
-def img_to_png_bytes(img_bgr: np.ndarray) -> bytes:
-    _, enc = cv2.imencode(".png", img_bgr)
-    return enc.tobytes()
-
-
-def mask_to_png_bytes(mask: np.ndarray) -> bytes:
-    _, enc = cv2.imencode(".png", mask)
-    return enc.tobytes()
-
-
-def df_to_excel_bytes(df: pd.DataFrame) -> bytes:
+# Převod DaraFrame do xlsx
+def df_to_excel(df: pd.DataFrame) -> bytes:
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         df.to_excel(writer, sheet_name="Částice", index=False)
@@ -202,144 +222,111 @@ def df_to_excel_bytes(df: pd.DataFrame) -> bytes:
     buf.seek(0)
     return buf.read()
 
-
-def make_histogram_fig(df: pd.DataFrame, unit: str) -> plt.Figure:
-    col = f"Ekv. průměr ({unit})"
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4))
-
-    fig.patch.set_alpha(0.0)
-    for ax in axes:
-        ax.set_facecolor("none")
-        ax.tick_params(colors="gray")
-        ax.xaxis.label.set_color("gray")
-        ax.yaxis.label.set_color("gray")
-        ax.title.set_color("gray")
-        for spine in ax.spines.values():
-            spine.set_edgecolor("gray")
-
-    if col in df.columns and len(df) > 0:
-        data = df[col]
-        axes[0].hist(data, bins=min(25, len(df)), color="#4fc3f7", edgecolor="gray", linewidth=0.4, alpha=0.8)
-        axes[0].axvline(data.mean(), color="#ff7043", lw=1.5, ls="--", label=f"Průměr {data.mean():.3f}")
-        axes[0].axvline(data.median(), color="#66bb6a", lw=1.5, ls=":", label=f"Medián {data.median():.3f}")
-        axes[0].set_xlabel(f"Ekvivalentní průměr ({unit})")
-        axes[0].set_ylabel("Počet")
-        axes[0].set_title("Distribuce velikostí")
-        axes[0].legend(fontsize=8, framealpha=0.2)
-
-        circ = df["Kruhovitost"]
-        axes[1].hist(circ, bins=min(20, len(df)), color="#4fc3f7", edgecolor="gray", linewidth=0.4, alpha=0.8)
-        axes[1].axvline(circ.mean(), color="#ff7043", lw=1.5, ls="--", label=f"Průměr {circ.mean():.3f}")
-        axes[1].set_xlabel("Kruhovitost (0–1)")
-        axes[1].set_ylabel("Počet")
-        axes[1].set_title("Distribuce kruhovitosti")
-        axes[1].legend(fontsize=8, framealpha=0.2)
-
-    plt.tight_layout()
-    return fig
-
+def _odd(n: int) -> int:
+    return n if n % 2 == 1 else n + 1
 
 # Boční panel - sidebar
+
 with st.sidebar:
     st.markdown("## Ferografie")
     st.markdown("---")
 
+    # Testovací snímky
     st.markdown("### Testovací snímky")
+    test_files = ["test_fero_01.png", "test_fero_02.png", "test_fero_03.png"]
+    found_any = False
 
-    testovaci_soubory = ["test_fero_01.png", "test_fero_02.png", "test_fero_03.png"]
-
-    nalezeno_snimku = False
-    for img_name in testovaci_soubory:
-        img_path = os.path.join(script_dir, img_name)
-        if os.path.exists(img_path):
-            nalezeno_snimku = True
-            with open(img_path, "rb") as file:
+    for name in test_files:
+        path = os.path.join(script_dir, name)
+        if os.path.exists(path):
+            found_any = True
+            with open(path, "rb") as f:
                 st.download_button(
-                    label=f"Stáhnout {img_name}",
-                    data=file,
-                    file_name=img_name,
+                    label=f"Stáhnout {name}",
+                    data=f,
+                    file_name=name,
                     mime="image/png",
-                    use_container_width=True
+                    use_container_width=True,
                 )
 
-    if not nalezeno_snimku:
-        st.warning("Testovací snímky nebyly na serveru nalezeny.")
+    if not found_any:
+        st.warning("Testovací snímky nebyly nalezeny.")
 
     st.markdown("---")
 
-    uploaded_file = st.file_uploader(
-        "Nahrát snímek (PNG / JPG)",
-        type=["png", "jpg", "jpeg"]
-    )
+    uploaded_file = st.file_uploader("Nahrát snímek (PNG / JPG)", type=["png", "jpg", "jpeg"])
 
     st.markdown("---")
+
+    # Kalibrace - převod px na mm
     st.markdown("### Kalibrace")
     px_per_mm = st.number_input(
         "Rozlišení (px / mm)",
-        min_value=0.1, max_value=50000.0,
-        value=10.0, step=0.5
+        min_value=0.1, max_value=50_000.0,
+        value=10.0, step=0.5,
     )
-    unit = st.selectbox("Jednotka výstupu", ["mm", "µm"], index=0)
+    unit = "mm"
 
     st.markdown("---")
+
+    # Předzpracování
     st.markdown("### Předzpracování obrazu")
-    brightness = st.slider("Jas (Brightness)", -100, 100, 0, 5)
-    contrast = st.slider("Kontrast (Contrast)", 0.5, 3.0, 1.0, 0.1)
-    blur_kernel = st.slider("Gaussovo rozostření (px)", 1, 15, 5, 2,
-                            help="Vyšší hodnota odstraní šum, ale může smazat drobné částice.")
+    brightness = st.slider("Jas", -100, 100, 0, 5)
+    contrast = st.slider("Kontrast", 0.5, 3.0, 1.0, 0.1)
+    blur_kernel = st.slider("Gaussovo rozostření (px)", 1, 15, 5, 2,)
 
     st.markdown("---")
+
+    # Canny
     st.markdown("### Canny – detekce hran")
     canny_auto = st.toggle("Automatické prahy", value=True)
     if canny_auto:
-        canny_sigma = st.slider(
-            "Citlivost (sigma)", 0.05, 0.8, 0.33, 0.01,
-            help="Menší hodnota = přísnější detekce hran"
-        )
-        canny_t1, canny_t2 = 0, 0
+        canny_sigma = st.slider("Citlivost detektoru", 0.05, 0.8, 0.33, 0.01,)
+        canny_t1 = canny_t2 = 0
     else:
         canny_sigma = 0.33
-        canny_t1 = st.slider("Canny T1 (dolní práh)", 0, 254, 10)
-        canny_t2 = st.slider("Canny T2 (horní práh)", canny_t1 + 1, 255, 100)
+        canny_t1 = st.slider("Dolní práh)", 0, 254, 10)
+        canny_t2 = st.slider("Horní práh)", canny_t1 + 1, 255, 100)
 
     st.markdown("### Dilatace (propojení hran)")
-    dilate_kernel = st.slider("Velikost kernelu dilatace (px)", 3, 25, 9, 2)
-    dilate_iter = st.slider("Počet iterací dilatace", 1, 5, 2)
+    dilate_kernel = st.slider("Velikost kernelu (px)", 3, 25, 9, 2)
+    dilate_iter = st.slider("Počet iterací", 1, 5, 2, key="dilate_iter_slider")
 
     st.markdown("### Čištění masky")
-    clean_kernel = st.slider("Velikost kernelu čištění (px)", 1, 11, 3, 2)
-    clean_iter = st.slider("Počet iterací čištění", 1, 5, 2)
+    clean_kernel = st.slider("Velikost kernelu (px)", 1, 11, 3, 2)
+    clean_iter = st.slider("Počet itercí", 1, 5, 2, key="clean_iter_slider")
 
     st.markdown("---")
+
+    # Filtrace
     st.markdown("### Filtrace částic")
     min_area_mm2 = st.number_input(
         "Minimální plocha (mm²)",
         min_value=0.0001, max_value=100.0,
-        value=0.005, step=0.001, format="%.4f"
+        value=0.005, step=0.001, format="%.4f",
     )
-    min_circularity = st.slider("Minimální kruhovitost", 0.0, 1.0, 0.0, 0.05,
-                                help="0 = všechny tvary, 1 = pouze dokonalé kruhy")
+    min_circularity = st.slider(
+        "Minimální kruhovitost", 0.0, 1.0, 0.0, 0.05,
+        help="0 = všechny tvary, 1 = dokonalé kruhy.",
+    )
 
     st.markdown("---")
+
+    # Zobrazení
     st.markdown("### Zobrazení")
     show_mask = st.toggle("Zobrazit masku", value=True)
     show_table = st.toggle("Zobrazit tabulku dat", value=True)
-    show_histograms = st.toggle("Zobrazit histogramy", value=True)
     highlight_max = st.toggle("Zvýraznit maxima v tabulce", value=True)
     show_debug = st.toggle("Mezikroky výsledné masky", value=True)
 
-# Hlavní obsah aplikace
+
+# Hlavní stránka
 
 st.title("Analýza ferografických snímků")
 
 if uploaded_file is None:
     st.info("Nahrajte snímek v levém panelu pro zahájení analýzy.")
     st.stop()
-
-
-def _odd(n: int) -> int:
-    return n if n % 2 == 1 else n + 1
-
 
 params = dict(
     px_per_mm=px_per_mm,
@@ -359,14 +346,15 @@ params = dict(
     clean_iter=clean_iter,
 )
 
-
+# Načtení obrazu do aplikace
 @st.cache_data(show_spinner=False)
 def cached_analysis(img_bytes: bytes, params_key: str):
     arr = np.frombuffer(img_bytes, dtype=np.uint8)
-    _img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-    _p = json.loads(params_key)
-    return run_analysis(_img, _p)
-
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if img is None:
+        st.error("Nepodařilo se načíst obraz – zkontrolujte formát souboru.")
+        st.stop()
+    return run_analysis(img, json.loads(params_key))
 
 img_bytes = uploaded_file.getvalue()
 params_key = json.dumps(params, sort_keys=True)
@@ -374,85 +362,70 @@ params_key = json.dumps(params, sort_keys=True)
 with st.spinner("Zpracovávám obraz…"):
     adjusted_img, annotated, mask, df, used_t1, used_t2 = cached_analysis(img_bytes, params_key)
 
+# Statistické hodnoty
 st.markdown("### Přehled výsledků")
-m1, m2, m3, m4, m5 = st.columns(5)
-
+col_metrics = st.columns(5)
 n = len(df)
-m1.metric("Celkem částic", n)
+col_metrics[0].metric("Celkem částic", n)
+
 if n > 0:
     ecol = f"Ekv. průměr ({unit})"
     acol = f"Plocha ({unit}²)"
-    m2.metric(f"Průměr ekv. Ø ({unit})", f"{df[ecol].mean():.2f}")
-    m3.metric(f"Medián ekv. Ø ({unit})", f"{df[ecol].median():.2f}")
-    m4.metric(f"Průměr plochy ({unit}²)", f"{df[acol].mean():.2f}")
-    m5.metric("Průměr kruhovitosti", f"{df['Kruhovitost'].mean():.2f}")
-else:
-    for col, lbl in zip([m2, m3, m4, m5],
-                        [f"Průměr ekv. Ø ({unit})", f"Medián ekv. Ø ({unit})", f"Průměr plochy ({unit}²)",
-                         "Průměr kruhovitosti"]):
-        col.metric(lbl, "—")
+    col_metrics[1].metric(f"Průměr plochy ({unit}²)", f"{df[acol].mean():.2f}")
+    col_metrics[2].metric("Průměr kruhovitosti", f"{df['Kruhovitost'].mean():.2f}")
 
 st.markdown("---")
 
+# Snímky
 if show_mask:
     c1, c2, c3 = st.columns(3)
-    with c1:
-        st.markdown("<div style='text-align: center; font-weight: bold; margin-bottom: 10px;'>Upravený snímek</div>",
-                    unsafe_allow_html=True)
-        st.image(cv2.cvtColor(adjusted_img, cv2.COLOR_BGR2RGB), use_container_width=True)
-    with c2:
-        st.markdown("<div style='text-align: center; font-weight: bold; margin-bottom: 10px;'>Detekční maska</div>",
-                    unsafe_allow_html=True)
-        st.image(mask, clamp=True, use_container_width=True)
-    with c3:
-        st.markdown("<div style='text-align: center; font-weight: bold; margin-bottom: 10px;'>Anotovaný výsledek</div>",
-                    unsafe_allow_html=True)
-        st.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), use_container_width=True)
+    panels = [
+        (c1, "Upravený snímek", cv2.cvtColor(adjusted_img, cv2.COLOR_BGR2RGB)),
+        (c2, "Detekční maska", mask),
+        (c3, "Anotovaný výsledek", cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)),
+    ]
 else:
     c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("<div style='text-align: center; font-weight: bold; margin-bottom: 10px;'>Upravený snímek</div>",
-                    unsafe_allow_html=True)
-        st.image(cv2.cvtColor(adjusted_img, cv2.COLOR_BGR2RGB), use_container_width=True)
-    with c2:
-        st.markdown("<div style='text-align: center; font-weight: bold; margin-bottom: 10px;'>Anotovaný výsledek</div>",
-                    unsafe_allow_html=True)
-        st.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), use_container_width=True)
+    panels = [
+        (c1, "Upravený snímek", cv2.cvtColor(adjusted_img, cv2.COLOR_BGR2RGB)),
+        (c2, "Anotovaný výsledek", cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)),
+    ]
+
+for col, title, image in panels:
+    with col:
+        st.markdown(
+            f"<div style='text-align:center;font-weight:bold;margin-bottom:10px'>{title}</div>",
+            unsafe_allow_html=True,
+        )
+        st.image(image, clamp=True, use_container_width=True)
 
 st.markdown("---")
 
+# Mezikroky masky
 if show_debug:
-    st.markdown("### Mezikroky vytvoření výsledné masky")
-    gray_img = cv2.cvtColor(adjusted_img, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.GaussianBlur(gray_img, (params["blur_kernel"], params["blur_kernel"]), 0)
-    canny_dbg = cv2.Canny(blurred, used_t1, used_t2)
-    k_d = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
-                                    (params["dilate_kernel"], params["dilate_kernel"]))
-    dilated = cv2.dilate(canny_dbg, k_d, iterations=params["dilate_iter"])
-    _, otsu = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    st.markdown("#### Mezikroky vytvoření výsledné masky")
+    gray_dbg = cv2.cvtColor(adjusted_img, cv2.COLOR_BGR2GRAY)
+    blurred_dbg = cv2.GaussianBlur(gray_dbg, (params["blur_kernel"], params["blur_kernel"]), 0)
+    canny_dbg = cv2.Canny(blurred_dbg, used_t1, used_t2)
+    k_d = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (params["dilate_kernel"], params["dilate_kernel"]))
+    dilated_dbg = cv2.dilate(canny_dbg, k_d, iterations=params["dilate_iter"])
+    _, otsu_dbg = cv2.threshold(blurred_dbg, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
     d1, d2, d3, d4 = st.columns(4)
-    with d1:
-        st.markdown(f"**1. Canny hrany**")
-        st.image(canny_dbg, clamp=True, use_container_width=True)
-    with d2:
-        st.markdown(f"**2. Po dilataci**")
-        st.image(dilated, clamp=True, use_container_width=True)
-    with d3:
-        st.markdown("**3. Otsu maska**")
-        st.image(otsu, clamp=True, use_container_width=True)
-    with d4:
-        st.markdown("**4. Výsledná maska**")
-        st.image(mask, clamp=True, use_container_width=True)
+    for col, label, img_dbg in [
+        (d1, "Cannyho detektor", canny_dbg),
+        (d2, "Po dilataci", dilated_dbg),
+        (d3, "Otsuova maska", otsu_dbg),
+        (d4, "Výsledná maska", mask),
+    ]:
+        with col:
+            st.markdown(f"**{label}**")
+            st.image(img_dbg, clamp=True, use_container_width=True)
+
     st.markdown("---")
 
-if show_histograms and n > 0:
-    st.markdown("### Distribuce")
-    hist_fig = make_histogram_fig(df, unit)
-    st.pyplot(hist_fig, use_container_width=True, clear_figure=True)
-    plt.close(hist_fig)
-    st.markdown("---")
 
+# Tabulka
 if show_table:
     st.markdown(f"### Naměřená data  `{n} částic`")
     if n > 0:
@@ -466,49 +439,39 @@ if show_table:
 
 st.markdown("---")
 
+# Export
 st.markdown("### Export výsledků")
-e1, e2, e3, e4 = st.columns(4)
-
 fname = uploaded_file.name.rsplit(".", 1)[0]
+e1, e2, e3, e4 = st.columns(4)
 
 with e1:
     if n > 0:
         st.download_button(
-            " CSV",
+            "CSV",
             data=df.to_csv(index=False).encode("utf-8-sig"),
             file_name=f"{fname}_data.csv",
             mime="text/csv",
             use_container_width=True,
         )
     else:
-        st.button(" CSV", disabled=True, use_container_width=True)
+        st.button("CSV", disabled=True, use_container_width=True)
 
 with e2:
     if n > 0:
         st.download_button(
-            " Excel (.xlsx)",
-            data=df_to_excel_bytes(df),
+            "Excel (.xlsx)",
+            data=df_to_excel(df),
             file_name=f"{fname}_data.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
         )
     else:
-        st.button(" Excel (.xlsx)", disabled=True, use_container_width=True)
+        st.button("Excel (.xlsx)", disabled=True, use_container_width=True)
 
 with e3:
-    st.download_button(
-        " Anotovaný snímek (PNG)",
-        data=img_to_png_bytes(annotated),
-        file_name=f"{fname}_anotovany.png",
-        mime="image/png",
-        use_container_width=True,
+    st.download_button("Anotovaný snímek (PNG)", data=to_image(annotated), file_name=f"{fname}_anotovany.png", mime="image/png", use_container_width=True,
     )
 
 with e4:
-    st.download_button(
-        " Maska (PNG)",
-        data=mask_to_png_bytes(mask),
-        file_name=f"{fname}_maska.png",
-        mime="image/png",
-        use_container_width=True,
+    st.download_button("Maska (PNG)", data=to_image(mask), file_name=f"{fname}_maska.png", mime="image/png", use_container_width=True,
     )
