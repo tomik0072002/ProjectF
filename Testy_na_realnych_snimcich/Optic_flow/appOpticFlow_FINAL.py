@@ -140,7 +140,6 @@ def encode_png(img_bgr):
 
 
 def make_combined(panels):
-    """Složí 4 panely do 2×2 gridu (šetří paměť vs hstack celého videa)."""
     h = min(p.shape[0] for p in panels)
     w = min(p.shape[1] for p in panels)
     resized = [cv2.resize(p, (w, h)) for p in panels]
@@ -155,8 +154,6 @@ def results_to_dataframe(results):
         s = r["stats"]
         rows.append({
             "segment": i + 1,
-            "frame": r["frame_idx"],
-            "cas_s": round(r["time_s"], 3),
             "pohybujici_pixely": s["moving_pixels"],
             "pokryti_pct": round(s["coverage_pct"], 2),
             "avg_magnituda": round(s["avg_magnitude"], 4),
