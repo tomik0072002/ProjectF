@@ -95,8 +95,9 @@ def combine(mask: np.ndarray, dist: int) -> np.ndarray:
 def calculate_confiS(max_z: float, area: float, circ: float, thresh: float) -> int:
     s = 0
     if max_z >= thresh * 1.5: s += 1
-    if max_z >= thresh * 2.5: s += 1
-    if max_z >= thresh * 4.0: s += 1
+    if max_z >= thresh * 4: s += 1
+    if max_z >= thresh * 12: s += 1
+
     if 10 <= area <= 500: s += 1
     if circ > 0.4: s += 1
     return s
@@ -262,6 +263,29 @@ if "sl_alpha" not in st.session_state:
 with st.sidebar:
     st.markdown("### FV Hotspot Detektor")
     st.caption("Demonstrátor zpracování obrazu")
+    st.markdown("---")
+
+    # Testovací snímky
+    st.markdown("### Testovací snímky")
+    test_files = ["test_termo_01.jpg", "test_termo_02.jpg", "test_termo_03.jpg", "test_termo_04.jpg"]
+    found_any = False
+
+    for name in test_files:
+        path = os.path.join(script_dir, name)
+        if os.path.exists(path):
+            found_any = True
+            with open(path, "rb") as f:
+                st.download_button(
+                    label=f"Stáhnout {name}",
+                    data=f,
+                    file_name=name,
+                    mime="image/jpg",
+                    use_container_width=True,
+                )
+
+    if not found_any:
+        st.warning("Testovací snímky nebyly nalezeny.")
+
     st.markdown("---")
 
     uploaded = st.file_uploader("Nahrát termogram", type=["jpg", "jpeg", "png",])
