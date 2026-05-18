@@ -59,38 +59,40 @@ class Hotspot:
 
 
 # Detekce a zpracování obrazu
-def priprav(img: np.ndarray, blur_k: int) -> np.ndarray:
+
+# Předzpracování
+def preprocess(img: np.ndarray, blur_k: int) -> np.ndarray:
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32)
     if blur_k >= 3:
         k = blur_k | 1
         gray = cv2.GaussianBlur(gray, (k, k), 0)
     return gray
 
-
-def zscore_mapa(gray: np.ndarray, window: int) -> np.ndarray:
+# Vytvoření Z skóre mapy
+def make_zscore_map(gray: np.ndarray, window: int) -> np.ndarray:
     k = window | 1
     mu = cv2.boxFilter(gray, -1, (k, k))
     sq_mu = cv2.boxFilter(gray ** 2, -1, (k, k))
     std = np.sqrt(np.clip(sq_mu - mu ** 2, 0, None)) + 1e-6
     return (gray - mu) / std
 
-
-def sestav_masku(zmap: np.ndarray, thresh: float, morph_k: int) -> np.ndarray:
-    maska = (zmap >= thresh).astype(np.uint8) * 255
+# Binární maska
+def make_mask(zmap: np.ndarray, thresh: float, morph_k: int) -> np.ndarray:
+    mask = (zmap >= thresh).astype(np.uint8) * 255
     if morph_k >= 3:
         k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (morph_k | 1, morph_k | 1))
-        maska = cv2.morphologyEx(maska, cv2.MORPH_OPEN, k)
-    return maska
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, k)
+    return mask
 
-
-def sluc(maska: np.ndarray, dist: int) -> np.ndarray:
+# Sloučení maky a morfologické operace
+def combine(mask: np.ndarray, dist: int) -> np.ndarray:
     if dist <= 0:
-        return maska
+        return mask
     k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dist | 1, dist | 1))
-    return cv2.erode(cv2.dilate(maska, k), k)
+    return cv2.erode(cv2.dilate(mask, k), k)
 
-
-def spocti_confidence(max_z: float, area: float, circ: float, thresh: float) -> int:
+# Spočítání ukazatelu závažnosti
+def calculate_confiS(max_z: float, area: float, circ: float, thresh: float) -> int:
     s = 0
     if max_z >= thresh * 1.5: s += 1
     if max_z >= thresh * 2.5: s += 1
@@ -99,8 +101,8 @@ def spocti_confidence(max_z: float, area: float, circ: float, thresh: float) -> 
     if circ > 0.4: s += 1
     return s
 
-
-def detekce(img_bytes: bytes, params: str):
+# Detekce hotspotů
+def detection(img_bytes: bytes, params: str):
     p = json.loads(params)
     arr = np.frombuffer(img_bytes, np.uint8)
     img_raw = cv2.imdecode(arr, cv2.IMREAD_COLOR)
@@ -116,11 +118,11 @@ def detekce(img_bytes: bytes, params: str):
     if p["alpha"] != 1.0 or p["beta"] != 0:
         img = cv2.convertScaleAbs(img, alpha=p["alpha"], beta=p["beta"])
 
-    gray = priprav(img, p["blur_k"])
-    zmap = zscore_mapa(gray, p["z_window"])
-    maska_surova = (zmap >= p["z_thresh"]).astype(np.uint8) * 255
-    maska = sestav_masku(zmap, p["z_thresh"], p["morph_k"])
-    merged = sluc(maska, p["merge_dist"])
+    gray = preprocess(img, p["blur_k"])
+    zmap = make_zscore_map(gray, p["z_window"])
+    raw_mask = (zmap >= p["z_thresh"]).astype(np.uint8) * 255
+    mask = make_mask(zmap, p["z_thresh"], p["morph_k"])
+    merged = combine(mask, p["merge_dist"])
 
     cnts, _ = cv2.findContours(merged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     hotspoty = []
@@ -148,7 +150,7 @@ def detekce(img_bytes: bytes, params: str):
         max_z = float(px_z.max()) if px_z.size else 0.0
         mean_z = float(px_z.mean()) if px_z.size else 0.0
         max_i = float(px_g.max()) if px_g.size else 0.0
-        conf = spocti_confidence(max_z, area, circ, p["z_thresh"])
+        conf = calculate_confiS(max_z, area, circ, p["z_thresh"])
 
         if conf < p["conf_min"]:
             continue
@@ -164,10 +166,10 @@ def detekce(img_bytes: bytes, params: str):
     for i, h in enumerate(hotspoty):
         h.id = i + 1
 
-    return img, gray, zmap, maska_surova, merged, hotspoty
+    return img, gray, zmap, raw_mask, merged, hotspoty
 
 
-# Anotace
+# Anotace hotspotů
 CONF_BGR = {
     0: (160, 160, 160),
     1: (0, 210, 210),
@@ -178,13 +180,11 @@ CONF_BGR = {
 }
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 
-
 def putText_outline(img, text, org, scale, color_fg, thickness=1):
     cv2.putText(img, text, org, FONT, scale, (0, 0, 0), thickness + 2, cv2.LINE_AA)
     cv2.putText(img, text, org, FONT, scale, color_fg, thickness, cv2.LINE_AA)
 
-
-def anotuj(img: np.ndarray, hotspoty: List[Hotspot]) -> np.ndarray:
+def anotation(img: np.ndarray, hotspoty: List[Hotspot]) -> np.ndarray:
     out = img.copy()
     for hs in hotspoty:
         bgr = CONF_BGR.get(min(hs.confidence, 5), (0, 0, 255))
@@ -229,7 +229,7 @@ def render_zscore(zmap: np.ndarray, z_thresh: float) -> bytes:
 
 
 # Konfigurace a přednastavení
-FILTER_ZAVAZNOST_MAP = {
+Severity_of_fingings = {
     "Vše (i slabé nálezy)": 0,
     "Střední a kritické": 1,
     "Pouze kritické": 3,
@@ -243,7 +243,7 @@ PRESETS = {
     "strict": dict(alpha=1.0, beta=0, blur_k=7, z_window=91, z_thresh=3.5, morph_k=5,
                    merge_dist=10, min_area=10, max_area=500, max_aspect=3.5, min_circ=0.3, conf_min=1),
 }
-CONF_TO_FILTER = {v: k for k, v in FILTER_ZAVAZNOST_MAP.items()}
+CONF_TO_FILTER = {v: k for k, v in Severity_of_fingings.items()}
 
 
 def apply_preset(name: str):
@@ -264,19 +264,18 @@ with st.sidebar:
     st.caption("Demonstrátor zpracování obrazu")
     st.markdown("---")
 
-    uploaded = st.file_uploader("Nahrát termogram", type=["jpg", "jpeg", "png", "bmp", "tif"])
+    uploaded = st.file_uploader("Nahrát termogram", type=["jpg", "jpeg", "png",])
     st.markdown("---")
 
     st.markdown("**Rychlé předvolby**")
     cols = st.columns(3)
-
 
     def get_btn_type(label):
         return "primary" if st.session_state.get("active_preset") == label else "secondary"
 
     if cols[0].button("Standard", use_container_width=True, type=get_btn_type("Standard")):
         apply_preset("standard")
-        st.session_state["active_preset"] = "Standard"
+        st.session_state["active_preset"] = "Standardní"
         st.rerun()
 
     if cols[1].button("Citlivé", use_container_width=True, type=get_btn_type("Citlivé")):
@@ -291,7 +290,7 @@ with st.sidebar:
 
     st.markdown("---")
 
-    with st.expander("Fáze 1: Geometrie a Předzpracování", expanded=False):
+    with st.expander("Geometrie a Předzpracování", expanded=False):
         crop_t = st.number_input("Ořez shora [px]", 0, step=10, key="sl_crop_t")
         crop_b = st.number_input("Ořez zdola [px]", 0, step=10, key="sl_crop_b")
         crop_l = st.number_input("Ořez zleva [px]", 0, step=10, key="sl_crop_l")
@@ -301,15 +300,15 @@ with st.sidebar:
         beta = st.slider("Jas (Beta)", -100, 100, key="sl_beta")
         blur_k = st.slider("Gauss. filtr [px]", 0, 15, step=2, key="sl_blur_k")
 
-    with st.expander("Fáze 2: Statistická anomálie", expanded=False):
+    with st.expander("Statistická anomálie", expanded=False):
         z_window = st.slider("Velikost okna [px]", 11, 201, step=2, key="sl_z_window")
         z_thresh = st.slider("Z-skóre práh", 1.0, 8.0, step=0.1, key="sl_z_thresh")
 
-    with st.expander("Fáze 3: Morfologické operace", expanded=False):
-        morph_k = st.slider("Morf. otevření [px]", 0, 11, step=2, key="sl_morph_k")
-        merge_dist = st.slider("Sloučení [px]", 0, 40, step=5, key="sl_merge_dist")
+    with st.expander("Morfologické operace", expanded=False):
+        morph_k = st.slider("MOrfologické otevření [px]", 0, 11, step=2, key="sl_morph_k")
+        merge_dist = st.slider("Morfologické sloučení [px]", 0, 40, step=5, key="sl_merge_dist")
 
-    with st.expander("Fáze 4: Geometrická filtrace", expanded=False):
+    with st.expander("Geometrická filtrace", expanded=False):
         min_area = st.slider("Min. plocha [px²]", 5, 200, step=5, key="sl_min_area")
         max_area = st.slider("Max. plocha [px²]", 100, 3500, step=100, key="sl_max_area")
         max_aspect = st.slider("Max. poměr stran", 1.0, 10.0, step=0.5, key="sl_max_aspect")
@@ -317,10 +316,10 @@ with st.sidebar:
         st.markdown("---")
         filter_label = st.radio(
             "Zobrazovat ve výsledcích:",
-            options=list(FILTER_ZAVAZNOST_MAP.keys()),
+            options=list(Severity_of_fingings.keys()),
             key="filter_zavaznost"
         )
-        conf_min = FILTER_ZAVAZNOST_MAP[filter_label]
+        conf_min = Severity_of_fingings[filter_label]
 
 # Hlavní část
 st.title("Detekce Hotspotů")
@@ -353,13 +352,12 @@ img_bytes = uploaded.getvalue()
 
 @st.cache_data(show_spinner=False)
 def cached(img_bytes, params):
-    return detekce(img_bytes, params)
+    return detection(img_bytes, params)
 
 
-with st.spinner("Počítám analýzu..."):
-    img, gray, zmap, maska_surova, merged, hotspoty = cached(img_bytes, params_json)
+img, gray, zmap, raw_mask, merged, hotspoty = cached(img_bytes, params_json)
 
-annotated = anotuj(img, hotspoty)
+annotated = anotation(img, hotspoty)
 
 # Pipeline aplikace
 st.markdown("---")
@@ -368,7 +366,7 @@ c1, c2 = st.columns(2)
 with c1:
     st.image(cv2.cvtColor(img, cv2.COLOR_BGR2RGB), caption="Originál (s aplikovaným ořezem)", use_container_width=True)
 with c2:
-    st.image(gray / 255.0, caption="Předzpracovaný snímek (Kontrast, Jas, Gauss. filtr)", use_container_width=True,
+    st.image(gray / 255.0, caption="Předzpracovaný snímek", use_container_width=True,
              clamp=True)
 
 st.markdown("---")
@@ -378,7 +376,7 @@ with c3:
     zs_bytes = render_zscore(zmap, z_thresh)
     st.image(zs_bytes, caption=f"Z-skóre mapa (práh: {z_thresh})", use_container_width=True)
 with c4:
-    st.image(maska_surova, caption="Surová maska (před morfologií)", use_container_width=True)
+    st.image(raw_mask, caption="Surová maska s hotspoty", use_container_width=True)
 
 st.markdown("---")
 st.header("Finální výsledek a filtrace")
@@ -399,7 +397,7 @@ with col_center:
     st.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), use_container_width=True)
 
 st.markdown("---")
-st.markdown("#### Export výsledků")
+st.markdown("#### Tabulka s výsledky")
 
 fname = uploaded.name.rsplit(".", 1)[0]
 
@@ -422,6 +420,7 @@ if hotspoty:
     st.dataframe(df, use_container_width=True, hide_index=True)
 
     # Tlačítka pro stažení
+    st.markdown("#### Stažení výsledků")
     dl_col1, dl_col2 = st.columns(2)
     with dl_col1:
         st.download_button(
