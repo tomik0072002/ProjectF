@@ -168,6 +168,25 @@ with st.sidebar:
     st.markdown("Analýza optického toku")
     st.markdown("---")
 
+    # Testovací snímky
+    st.markdown("### Testovací snímky")
+    test_files = ["test_flow_01a.jpg", "test_flow_01b.jpg", "test_flow_02a.jpg", "test_flow_02b.jpg",
+                  "test_flow_03a.jpg", "test_flow_03b.jpg"]
+    found_any = False
+
+    for name in test_files:
+        path = os.path.join(script_dir, name)
+        if os.path.exists(path):
+            found_any = True
+            with open(path, "rb") as f:
+                st.download_button(
+                    label=f"Stáhnout {name}",
+                    data=f,
+                    file_name=name,
+                    mime="image/jpg",
+                    use_container_width=True,
+                )
+
     st.markdown("**Metoda výpočtu**")
     flow_method = st.radio(
         "flow_method_radio",
@@ -182,27 +201,27 @@ with st.sidebar:
         if is_dense:
             st.caption("Parametry hustého toku")
             pyr_scale = st.slider("Měřítko pyramid", 0.1, 0.9, 0.5, 0.05)
-            levels = st.slider("Úrovně", 1, 10, 6)
+            levels = st.slider("Úrovně", 1, 10, 5)
             winsize = st.slider("Velikost okna", 5, 51, 25, 2)
-            iterations = st.slider("Počet iterací", 1, 10, 5)
+            iterations = st.slider("Počet iterací", 1, 10, 6)
             poly_n = st.slider("Velikost okna N-tého polynomu", 5, 9, 7, 2)
             poly_sigma = st.slider("Směrodatná odchylka", 1.0, 2.5, 1.5, 0.1)
             lk_max_corners = 500; lk_quality = 0.01; lk_min_dist = 7
             lk_block = 7; lk_winsize = 21; lk_levels = 3
         else:
             st.caption("Parametry řídkého toku")
-            lk_max_corners = st.slider("Max. počet rohů", 50, 2000, 500, 50)
-            lk_quality = st.slider("Kvalita rohů", 0.001, 0.1, 0.01, 0.001, format="%.3f")
-            lk_min_dist = st.slider("Min. vzdálenost rohů", 3, 30, 7)
-            lk_block = st.slider("Velikost sledovaného okna", 3, 15, 7, 2)
-            lk_winsize = st.slider("Velikost vyhledávacího okna", 5, 51, 21, 2)
-            lk_levels = st.slider("Počet úrovní pyramid", 1, 6, 3)
+            lk_max_corners = st.slider("Max. počet rohů", 50, 2000, 200, 50)
+            lk_quality = st.slider("Kvalita rohů", 0.001, 0.1, 0.01, 0.055, format="%.3f")
+            lk_min_dist = st.slider("Min. vzdálenost rohů", 3, 30, 8)
+            lk_block = st.slider("Velikost sledovaného okna", 3, 15, 9, 2)
+            lk_winsize = st.slider("Velikost vyhledávacího okna", 5, 51, 32, 2)
+            lk_levels = st.slider("Počet úrovní pyramid", 1, 6, 4)
             pyr_scale = 0.5; levels = 6; winsize = 25
             iterations = 5; poly_n = 7; poly_sigma = 1.5
 
-    with st.expander("Detekce a zobrazení pohybu", expanded=False):
+    with st.expander("Detekce a zobrazení pohybu", expanded=True):
         st.caption("Nastavení prahů a vizualizace")
-        threshold_factor = st.slider("Práh pohybu (násobek směrodatné odchylky)", 0.5, 5.0, 2.0, 0.1)
+        threshold_factor = st.slider("Práh pohybu (násobek směrodatné odchylky)", 0.5, 5.0, 2.5, 0.1)
         arrow_step = st.slider("HUstota vykreslených šipek", 10, 60, 25, 5, disabled=not is_dense)
 
 
