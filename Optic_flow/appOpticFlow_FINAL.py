@@ -18,7 +18,7 @@ logo = Image.open(logo_path)
 
 # Nastavení stránky
 st.set_page_config(
-    page_title="Zpracování obrazu - Optický tok",
+    page_title="Optický tok",
     page_icon=logo,
     layout="wide",
     initial_sidebar_state="expanded",
