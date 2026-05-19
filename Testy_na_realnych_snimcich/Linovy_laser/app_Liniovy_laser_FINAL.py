@@ -459,7 +459,7 @@ if st.session_state.depth_map is not None:
     dl_col1, dl_col2 = st.columns(2)
     with dl_col1:
         st.download_button(
-            label="Stáhnout 2D vizualizaci a grafy (.png)",
+            label="Stáhnout 2D vizualizaci(.png)",
             data=st.session_state.fig_bytes,
             file_name=f"sken_{fname}_depth_map.png",
             mime="image/png",
