@@ -9,6 +9,7 @@ import plotly.graph_objects as go
 import io
 import time
 from PIL import Image
+import gdown
 
 # Načtení loga VUT
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -22,6 +23,14 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# Stažení souboru z Google Drive
+def download_from_gdrive(file_id: str, output_path: str = "data.npy") -> str:
+    if not os.path.exists(output_path):
+        with st.spinner("Stahuji soubor z Google Drive..."):
+            url = f"https://drive.google.com/uc?id={file_id}"
+            gdown.download(url, output_path, quiet=False, fuzzy=True)
+    return output_path
 
 # Funkce pro zpracování obrazu
 
@@ -300,9 +309,21 @@ with st.sidebar:
 st.title("Zpracování skenu")
 
 # Vstupní soubor
+source_mode = st.radio(
+    "Zdroj souboru",
+    ["Google Drive (File ID)", "Lokální cesta"],
+    horizontal=True,
+)
+
 input_col, btn_col = st.columns([4, 1])
 with input_col:
-    file_path = st.text_input("Cesta k souboru (.npy)", value="./OUT/kamera_251.npy", label_visibility="collapsed", placeholder="Cesta k souboru (.npy)")
+    if source_mode == "Google Drive (File ID)":
+        gdrive_id = st.text_input("Google Drive File ID", placeholder="Např: 1ABC123XYZ... (část URL mezi /d/ a /view)")
+        local_filename = st.text_input("Název pro uložení lokálně", value="data.npy")
+        file_path = local_filename if gdrive_id else ""
+    else:
+        gdrive_id = ""
+        file_path = st.text_input("Cesta k souboru (.npy)", value="./OUT/kamera_251.npy", label_visibility="collapsed", placeholder="Cesta k souboru (.npy)")
 with btn_col:
     run_btn = st.button("SPUSTIT ANALÝZU", use_container_width=True)
 
@@ -319,6 +340,12 @@ if 'depth_map' not in st.session_state:
 
 # Spuštění analýzy
 if run_btn:
+    if source_mode == "Google Drive (File ID)":
+        if not gdrive_id.strip():
+            st.error("Zadej Google Drive File ID.")
+            st.stop()
+        file_path = download_from_gdrive(gdrive_id.strip(), local_filename)
+
     fp = Path(file_path)
     if not fp.exists():
         st.error(f"Soubor nenalezen: `{file_path}`")
