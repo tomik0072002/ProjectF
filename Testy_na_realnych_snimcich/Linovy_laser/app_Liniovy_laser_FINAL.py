@@ -26,12 +26,12 @@ st.set_page_config(
 
 # Stažení souboru z Google Drive
 def download_from_gdrive(file_id: str, output_path: str = "data.npy") -> str:
-    if not os.path.exists(output_path):
+    cache_path = f"{file_id}.npy"
+    if not os.path.exists(cache_path):
         with st.spinner("Stahuji soubor z Google Drive..."):
             url = f"https://drive.google.com/uc?export=download&id={file_id}"
-            gdown.download(url, output_path, quiet=False)
-    return output_path
-
+            gdown.download(url, cache_path, quiet=False)
+    return cache_path
 # Funkce pro zpracování obrazu
 
 def take_laser_signal(img: np.ndarray, channel: str = 'GRAY') -> np.ndarray: # Funkce pro extrakci laserového signálu
@@ -318,8 +318,8 @@ source_mode = st.radio(
 input_col, btn_col = st.columns([4, 1])
 with input_col:
     if source_mode == "Google Drive (File ID)":
-        gdrive_id = st.text_input("Google Drive File ID", placeholder="Např: 1ABC123XYZ... (část URL mezi /d/ a /view)")
-        local_filename = st.text_input("Název pro uložení lokálně", value="data.npy")
+        gdrive_id = st.text_input("Google Drive File ID", placeholder="(část URL souboru mezi /d/ a /view)")
+        local_filename = f"{gdrive_id.strip()}.npy" if gdrive_id else "data.npy"
         file_path = local_filename if gdrive_id else ""
     else:
         gdrive_id = ""
