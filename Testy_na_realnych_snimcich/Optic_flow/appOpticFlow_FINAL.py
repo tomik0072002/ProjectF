@@ -221,7 +221,7 @@ with st.sidebar:
 
     with st.expander("Detekce a zobrazení pohybu", expanded=True):
         st.caption("Nastavení prahů a vizualizace")
-        threshold_factor = st.slider("Práh pohybu (násobek směrodatné odchylky)", 0.5, 5.0, 2.5, 0.1)
+        threshold_factor = st.slider("Práh pohybu (násobek směrodatné odchylky)", 0.5, 5.0, 2.3, 0.1)
         arrow_step = st.slider("HUstota vykreslených šipek", 10, 60, 25, 5, disabled=not is_dense)
 
 
