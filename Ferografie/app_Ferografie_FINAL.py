@@ -16,7 +16,7 @@ logo = Image.open(logo_path)
 
 # Nastavení stránky
 st.set_page_config(
-    page_title="Liniovy laser - analyza skenu",
+    page_title="Ferografie - analyza otěrových částic",
     page_icon=logo,
     layout="wide",
     initial_sidebar_state="expanded",
