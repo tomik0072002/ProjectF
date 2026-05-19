@@ -372,6 +372,7 @@ if run_btn:
                 f"Neplatný rozsah snímků: od {fs} do {fe - 1}. "
             )
             st.stop()
+        snimky = snimky[fs:fe]
 
         if len(snimky) > 0:
             h_img, w_img = snimky[0].shape[:2]
