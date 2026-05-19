@@ -319,7 +319,7 @@ input_col, btn_col = st.columns([4, 1])
 with input_col:
     if source_mode == "Google Drive (File ID)":
         gdrive_id = st.text_input("Google Drive File ID", placeholder="(část URL souboru mezi /d/ a /view)")
-        local_filename = f"{gdrive_id.strip()}.npy" if gdrive_id else "data.npy"
+        local_filename = f"{gdrive_id.strip()[:4]}.npy" if gdrive_id else "data.npy"
         file_path = local_filename if gdrive_id else ""
     else:
         gdrive_id = ""
