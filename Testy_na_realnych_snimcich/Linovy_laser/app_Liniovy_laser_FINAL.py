@@ -28,12 +28,8 @@ st.set_page_config(
 def download_from_gdrive(file_id: str, output_path: str = "data.npy") -> str:
     if not os.path.exists(output_path):
         with st.spinner("Stahuji soubor z Google Drive..."):
-            gdown.download(
-                id=file_id,          # předání jako id= místo URL
-                output=output_path,
-                quiet=False,
-                fuzzy=True
-            )
+            url = f"https://drive.google.com/uc?export=download&id={file_id}"
+            gdown.download(url, output_path, quiet=False)
     return output_path
 
 # Funkce pro zpracování obrazu
