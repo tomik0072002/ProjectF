@@ -72,7 +72,6 @@ def make_panels(frame1_bgr, frame2_bgr, flow, threshold_factor=2.0, arrow_step=2
     motion_mask = magnitude > motion_threshold
     moving_mags = magnitude[motion_mask]
     typical_motion = np.percentile(moving_mags, 50) if len(moving_mags) > 0 else 1.0
-    arrow_scale = 40.0 / max(typical_motion, 1.0)
     p1 = frame2_bgr.copy()
     hsv = np.zeros_like(frame1_bgr)
     hsv[..., 1] = 255
@@ -87,6 +86,7 @@ def make_panels(frame1_bgr, frame2_bgr, flow, threshold_factor=2.0, arrow_step=2
     h, w = frame2_bgr.shape[:2]
     line_thick = max(1, round(w / 640))
     circle_r = max(2, round(w / 430))
+    arrow_scale = (w / 32.0) / max(typical_motion, 1.0)
     if method == "sparse" and sparse_pts1 is not None and len(sparse_pts1) > 0:
         for (x1, y1), (x2, y2) in zip(sparse_pts1, sparse_pts2):
             mag = np.hypot(x2 - x1, y2 - y1)
