@@ -152,7 +152,7 @@ with st.sidebar:
     # Testovací snímky
     st.markdown("### Testovací snímky")
     test_files = ["test_flow_01a.jpg", "test_flow_01b.jpg", "test_flow_02a.jpg", "test_flow_02b.jpg",
-                  "test_flow_03a.jpg", "test_flow_03b.jpg"]
+                  "test_flow_03a.jpg", "test_flow_03b.jpg", "test_flow_04a.jpg", "test_flow_04b.jpg"]
     found_any = False
     for name in test_files:
         path = os.path.join(script_dir, name)
