@@ -15,7 +15,6 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 logo_path = os.path.join(script_dir, "vut_brno_00.jpg")
 logo = Image.open(logo_path)
 
-
 # Nastavení stránky
 st.set_page_config(
     page_title="Optický tok",
@@ -33,7 +32,6 @@ _ss("img_frame1", None)
 _ss("img_frame2", None)
 _ss("img_file1_id", None)
 _ss("img_file2_id", None)
-
 
 # Hlavní funkce
 
@@ -211,7 +209,7 @@ with st.sidebar:
         else:
             st.caption("Parametry řídkého toku")
             lk_max_corners = st.slider("Max. počet rohů", 50, 2000, 200, 50)
-            lk_quality = st.slider("Kvalita rohů", 0.001, 0.1, 0.01, 0.055, format="%.3f")
+            lk_quality = st.slider("Kvalita rohů", 0.001, 0.1, 0.01, 0.005, format="%.3f")
             lk_min_dist = st.slider("Min. vzdálenost rohů", 3, 30, 8)
             lk_block = st.slider("Velikost sledovaného okna", 3, 15, 9, 2)
             lk_winsize = st.slider("Velikost vyhledávacího okna", 5, 51, 32, 2)
