@@ -9,12 +9,10 @@ import time
 from datetime import datetime
 import pandas as pd
 from PIL import Image
-
 # Načtení obrázku loga
 script_dir = os.path.dirname(os.path.abspath(__file__))
 logo_path = os.path.join(script_dir, "vut_brno_00.jpg")
 logo = Image.open(logo_path)
-
 # Nastavení stránky
 st.set_page_config(
     page_title="Optický tok",
@@ -22,19 +20,15 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
 # Inicializace stavu
 def _ss(key, default):
     if key not in st.session_state:
         st.session_state[key] = default
-
 _ss("img_frame1", None)
 _ss("img_frame2", None)
 _ss("img_file1_id", None)
 _ss("img_file2_id", None)
-
 # Hlavní funkce
-
 # Výpočet hustého toku
 def OF_flow_dense(gray1, gray2, pyr_scale, levels, winsize, iterations, poly_n, poly_sigma):
     g1 = cv2.GaussianBlur(gray1, (5, 5), 0)
@@ -44,7 +38,6 @@ def OF_flow_dense(gray1, gray2, pyr_scale, levels, winsize, iterations, poly_n, 
         pyr_scale=pyr_scale, levels=levels, winsize=winsize,
         iterations=iterations, poly_n=poly_n, poly_sigma=poly_sigma, flags=0
     )
-
 # Výpočet řídkého toku
 def OF_flow_sparse(gray1, gray2, max_corners, quality, min_dist, block_size, lk_winsize, lk_levels):
     g1 = cv2.GaussianBlur(gray1, (5, 5), 0)
@@ -70,7 +63,6 @@ def OF_flow_sparse(gray1, gray2, max_corners, quality, min_dist, block_size, lk_
             flow[yi, xi, 0] = x2 - x1
             flow[yi, xi, 1] = y2 - y1
     return flow, p1g, p2g
-
 # Vytvoření panelu vizualizace výsledků
 def make_panels(frame1_bgr, frame2_bgr, flow, threshold_factor=2.0, arrow_step=25, method="dense", sparse_pts1=None, sparse_pts2=None):
     magnitude, angle = cv2.cartToPolar(flow[..., 0], flow[..., 1])
@@ -81,23 +73,18 @@ def make_panels(frame1_bgr, frame2_bgr, flow, threshold_factor=2.0, arrow_step=2
     moving_mags = magnitude[motion_mask]
     typical_motion = np.percentile(moving_mags, 50) if len(moving_mags) > 0 else 1.0
     arrow_scale = 40.0 / max(typical_motion, 1.0)
-
     p1 = frame2_bgr.copy()
-
     hsv = np.zeros_like(frame1_bgr)
     hsv[..., 1] = 255
     hsv[..., 0] = angle * 180 / np.pi / 2
     hsv[..., 2] = cv2.normalize(magnitude, None, 0, 255, cv2.NORM_MINMAX)
     p2 = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
-
     p3 = frame2_bgr.copy()
     highlight = np.zeros_like(frame2_bgr)
     highlight[motion_mask] = (0, 0, 255)
     p3 = cv2.addWeighted(p3, 0.65, highlight, 0.35, 0)
-
     p4 = frame2_bgr.copy()
     h, w = frame2_bgr.shape[:2]
-
     if method == "sparse" and sparse_pts1 is not None and len(sparse_pts1) > 0:
         for (x1, y1), (x2, y2) in zip(sparse_pts1, sparse_pts2):
             mag = np.hypot(x2 - x1, y2 - y1)
@@ -118,7 +105,6 @@ def make_panels(frame1_bgr, frame2_bgr, flow, threshold_factor=2.0, arrow_step=2
                     color = (int(255 * (1 - t)), 255, int(255 * t)) if speed_norm < 0.5 else (0, int(255 * (1 - t)),
                                                                                                 255)
                     cv2.arrowedLine(p4, (x, y), end, color, 2, tipLength=0.3, line_type=cv2.LINE_AA)
-
     stats = {
         "moving_pixels": int(motion_mask.sum()),
         "coverage_pct": float(motion_mask.sum() / motion_mask.size * 100),
@@ -126,17 +112,11 @@ def make_panels(frame1_bgr, frame2_bgr, flow, threshold_factor=2.0, arrow_step=2
         "max_magnitude": float(magnitude.max()),
     }
     return p1, p2, p3, p4, stats, magnitude
-
-
 def bgr_to_rgb(img):
     return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-
 def encode_png(img_bgr):
     ok, buf = cv2.imencode(".png", img_bgr)
     return buf.tobytes() if ok else b""
-
-
 def make_combined(panels):
     h = min(p.shape[0] for p in panels)
     w = min(p.shape[1] for p in panels)
@@ -144,8 +124,6 @@ def make_combined(panels):
     top = np.hstack(resized[:2])
     bottom = np.hstack(resized[2:])
     return np.vstack([top, bottom])
-
-
 def results_to_dataframe(results):
     rows = []
     for i, r in enumerate(results):
@@ -158,20 +136,22 @@ def results_to_dataframe(results):
             "max_magnituda": round(s["max_magnitude"], 4),
         })
     return pd.DataFrame(rows)
-
-
+def downscale(img, max_w=1280):
+    h, w = img.shape[:2]
+    if w > max_w:
+        scale = max_w / w
+        img = cv2.resize(img, (max_w, int(h * scale)), interpolation=cv2.INTER_AREA)
+    return img
 # Boční panel - sidebar
 with st.sidebar:
     st.markdown("## Detekce pohybu")
     st.markdown("Analýza optického toku")
     st.markdown("---")
-
     # Testovací snímky
     st.markdown("### Testovací snímky")
     test_files = ["test_flow_01a.jpg", "test_flow_01b.jpg", "test_flow_02a.jpg", "test_flow_02b.jpg",
                   "test_flow_03a.jpg", "test_flow_03b.jpg"]
     found_any = False
-
     for name in test_files:
         path = os.path.join(script_dir, name)
         if os.path.exists(path):
@@ -184,7 +164,6 @@ with st.sidebar:
                     mime="image/jpg",
                     use_container_width=True,
                 )
-
     st.markdown("**Metoda výpočtu**")
     flow_method = st.radio(
         "flow_method_radio",
@@ -192,9 +171,7 @@ with st.sidebar:
         label_visibility="collapsed",
     )
     is_dense = "Dense" in flow_method
-
     st.markdown("---")
-
     with st.expander("Parametry výpočtu", expanded=True):
         if is_dense:
             st.caption("Parametry hustého toku")
@@ -216,17 +193,12 @@ with st.sidebar:
             lk_levels = st.slider("Počet úrovní pyramid", 1, 6, 4)
             pyr_scale = 0.5; levels = 6; winsize = 25
             iterations = 5; poly_n = 7; poly_sigma = 1.5
-
     with st.expander("Detekce a zobrazení pohybu", expanded=True):
         st.caption("Nastavení prahů a vizualizace")
         threshold_factor = st.slider("Práh pohybu (násobek směrodatné odchylky)", 0.5, 5.0, 2.3, 0.1)
         arrow_step = st.slider("HUstota vykreslených šipek", 10, 60, 25, 5, disabled=not is_dense)
-
-
 # Hlavní stránka
-
 st.title("OPTICKÝ TOK")
-
 st.markdown("Nahrajte dva po sobě jdoucí snímky pro detekci pohybu mezi nimi.")
 c1, c2 = st.columns(2)
 with c1:
@@ -234,30 +206,28 @@ with c1:
     f1 = st.file_uploader("Snímek 1", type=["png", "jpg", "jpeg",], key="img1", label_visibility="collapsed")
     if f1 is not None and f1.file_id != st.session_state.img_file1_id:
             img1_np = np.frombuffer(f1.read(), np.uint8)
-            st.session_state.img_frame1 = cv2.imdecode(img1_np, cv2.IMREAD_COLOR)
+            decoded = cv2.imdecode(img1_np, cv2.IMREAD_COLOR)
+            st.session_state.img_frame1 = downscale(decoded)
             st.session_state.img_file1_id = f1.file_id
     if st.session_state.img_frame1 is not None:
             st.image(bgr_to_rgb(st.session_state.img_frame1), use_container_width=True)
-
 with c2:
     st.markdown("**Snímek 2 (cílový)**")
     f2 = st.file_uploader("Snímek 2", type=["png", "jpg", "jpeg",], key="img2", label_visibility="collapsed")
     if f2 is not None and f2.file_id != st.session_state.img_file2_id:
             img2_np = np.frombuffer(f2.read(), np.uint8)
-            st.session_state.img_frame2 = cv2.imdecode(img2_np, cv2.IMREAD_COLOR)
+            decoded = cv2.imdecode(img2_np, cv2.IMREAD_COLOR)
+            st.session_state.img_frame2 = downscale(decoded)
             st.session_state.img_file2_id = f2.file_id
     if st.session_state.img_frame2 is not None:
             st.image(bgr_to_rgb(st.session_state.img_frame2), use_container_width=True)
-
 frame1 = st.session_state.get("img_frame1")
 frame2 = st.session_state.get("img_frame2")
-
 if frame1 is not None and frame2 is not None:
     if frame1.shape != frame2.shape:
             frame2 = cv2.resize(frame2, (frame1.shape[1], frame1.shape[0]))
     g1 = cv2.cvtColor(frame1, cv2.COLOR_BGR2GRAY)
     g2 = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
-
     t0 = time.perf_counter()
     if is_dense:
         flow = OF_flow_dense(g1, g2, pyr_scale, levels, winsize,
@@ -271,29 +241,23 @@ if frame1 is not None and frame2 is not None:
                                                            threshold_factor, arrow_step, "sparse",
                                                            sparse_pts1=pts1, sparse_pts2=pts2)
     elapsed = time.perf_counter() - t0
-
     st.markdown("---")
     st.markdown("### Statistické hodnoty")
     st.caption(f"Doba výpočtu: {elapsed * 1000:.0f} ms")
-
     mc1, mc2, mc3, mc4 = st.columns(4)
     mc1.metric("Pohybující se pixely", f"{stats['moving_pixels']:,}")
     mc2.metric("Pokrytí pohybem", f"{stats['coverage_pct']:.1f} %")
     mc3.metric("Průměrný pohyb", f"{stats['avg_magnitude']:.2f} [px]")
     mc4.metric("Max. pohyb", f"{stats['max_magnitude']:.2f} [px]")
-
     st.markdown("---")
     st.markdown("### Výsledky analýzy")
-
     panels_list = [p1, p2, p3, p4]
     panels_label = ["Originál", "Flow mapa (HSV)", "Detekce pohybu", "Vektory pohybu"]
-
     cols = st.columns(4)
     for i, (panel, label) in enumerate(zip(panels_list, panels_label)):
         with cols[i]:
             st.markdown(f"**{label}**")
             st.image(bgr_to_rgb(panel), use_container_width=True)
-
     combined = make_combined([p1, p2, p3, p4])
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     zip_buf = io.BytesIO()
