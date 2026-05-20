@@ -200,7 +200,7 @@ with st.sidebar:
             st.caption("Parametry hustého toku")
             pyr_scale = st.slider("Měřítko pyramid", 0.1, 0.9, 0.5, 0.05)
             levels = st.slider("Úrovně", 1, 10, 5)
-            winsize = st.slider("Velikost okna", 5, 51, 25, 2)
+            winsize = st.slider("Velikost okna", 5, 50, 25, 2)
             iterations = st.slider("Počet iterací", 1, 10, 6)
             poly_n = st.slider("Velikost okna N-tého polynomu", 5, 9, 7, 2)
             poly_sigma = st.slider("Směrodatná odchylka", 1.0, 2.5, 1.5, 0.1)
