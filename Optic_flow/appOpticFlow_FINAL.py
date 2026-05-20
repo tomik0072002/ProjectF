@@ -209,7 +209,7 @@ with st.sidebar:
         else:
             st.caption("Parametry řídkého toku")
             lk_max_corners = st.slider("Max. počet rohů", 50, 2000, 200, 50)
-            lk_quality = st.slider("Kvalita rohů", 0.001, 0.1, 0.01, 0.005, format="%.3f")
+            lk_quality = st.slider("Kvalita rohů", 0.001, 0.1, 0.01, 0.001, format="%.3f")
             lk_min_dist = st.slider("Min. vzdálenost rohů", 3, 30, 8)
             lk_block = st.slider("Velikost sledovaného okna", 3, 15, 9, 2)
             lk_winsize = st.slider("Velikost vyhledávacího okna", 5, 51, 32, 2)
