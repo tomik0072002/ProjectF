@@ -446,32 +446,18 @@ e1, e2, e3, e4 = st.columns(4)
 
 with e1:
     if n > 0:
-        st.download_button(
-            "CSV",
-            data=df.to_csv(index=False).encode("utf-8-sig"),
-            file_name=f"{fname}_data.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
+        st.download_button("CSV", data=df.to_csv(index=False).encode("utf-8-sig"), file_name=f"{fname}_data.csv", mime="text/csv", use_container_width=True,)
     else:
         st.button("CSV", disabled=True, use_container_width=True)
 
 with e2:
     if n > 0:
-        st.download_button(
-            "Excel (.xlsx)",
-            data=df_to_excel(df),
-            file_name=f"{fname}_data.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
+        st.download_button("Excel (.xlsx)", data=df_to_excel(df), file_name=f"{fname}_data.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,)
     else:
         st.button("Excel (.xlsx)", disabled=True, use_container_width=True)
 
 with e3:
-    st.download_button("Anotovaný snímek (PNG)", data=to_image(annotated), file_name=f"{fname}_anotovany.png", mime="image/png", use_container_width=True,
-    )
+    st.download_button("Anotovaný snímek (PNG)", data=to_image(annotated), file_name=f"{fname}_anotovany.png", mime="image/png", use_container_width=True,)
 
 with e4:
-    st.download_button("Maska (PNG)", data=to_image(mask), file_name=f"{fname}_maska.png", mime="image/png", use_container_width=True,
-    )
+    st.download_button("Maska (PNG)", data=to_image(mask), file_name=f"{fname}_maska.png", mime="image/png", use_container_width=True,)
