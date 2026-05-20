@@ -85,6 +85,8 @@ def make_panels(frame1_bgr, frame2_bgr, flow, threshold_factor=2.0, arrow_step=2
     p3 = cv2.addWeighted(p3, 0.65, highlight, 0.35, 0)
     p4 = frame2_bgr.copy()
     h, w = frame2_bgr.shape[:2]
+    line_thick = max(1, round(w / 640))
+    circle_r = max(2, round(w / 430))
     if method == "sparse" and sparse_pts1 is not None and len(sparse_pts1) > 0:
         for (x1, y1), (x2, y2) in zip(sparse_pts1, sparse_pts2):
             mag = np.hypot(x2 - x1, y2 - y1)
@@ -92,8 +94,8 @@ def make_panels(frame1_bgr, frame2_bgr, flow, threshold_factor=2.0, arrow_step=2
             t = speed_norm * 2 if speed_norm < 0.5 else (speed_norm - 0.5) * 2
             color = (int(255 * (1 - t)), 255, int(255 * t)) if speed_norm < 0.5 else (0, int(255 * (1 - t)), 255)
             cv2.arrowedLine(p4, (int(round(x1)), int(round(y1))),
-                            (int(round(x2)), int(round(y2))), color, 2, tipLength=0.3, line_type=cv2.LINE_AA)
-            cv2.circle(p4, (int(round(x1)), int(round(y1))), 3, (255, 255, 255), -1, cv2.LINE_AA)
+                            (int(round(x2)), int(round(y2))), color, line_thick, tipLength=0.3, line_type=cv2.LINE_AA)
+            cv2.circle(p4, (int(round(x1)), int(round(y1))), circle_r, (255, 255, 255), -1, cv2.LINE_AA)
     else:
         for y in range(0, h, arrow_step):
             for x in range(0, w, arrow_step):
@@ -104,7 +106,7 @@ def make_panels(frame1_bgr, frame2_bgr, flow, threshold_factor=2.0, arrow_step=2
                     t = speed_norm * 2 if speed_norm < 0.5 else (speed_norm - 0.5) * 2
                     color = (int(255 * (1 - t)), 255, int(255 * t)) if speed_norm < 0.5 else (0, int(255 * (1 - t)),
                                                                                                 255)
-                    cv2.arrowedLine(p4, (x, y), end, color, 2, tipLength=0.3, line_type=cv2.LINE_AA)
+                    cv2.arrowedLine(p4, (x, y), end, color, line_thick, tipLength=0.3, line_type=cv2.LINE_AA)
     stats = {
         "moving_pixels": int(motion_mask.sum()),
         "coverage_pct": float(motion_mask.sum() / motion_mask.size * 100),
