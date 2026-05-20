@@ -79,7 +79,7 @@ def calibrate(img_bytes, rows, cols, square_mm):
 
     corners, used_gray, scale = find_chessboard(gray, pattern)
     if corners is None:
-        return None, "Rohy šachovnice nebyly nalezeny.", None
+        return None, "Rohy šachovnice nebyly nalezeny.", None, None
 
     corners = corners.astype(np.float32)
     pts = corners.reshape(-1, 2)
@@ -759,12 +759,33 @@ st.title("Rozměrová detekce")
 st.markdown("Analýza rozměrů a geometrických tolerancí")
 
 st.markdown("---")
-st.markdown("---")
 
 # Boční panel - sidebar
 with st.sidebar:
     st.markdown("## Nastavení")
     st.markdown("---")
+    # Testovací snímky
+    st.markdown("### Testovací snímky")
+    test_files = ["test_rozmer_01.jpg", "test_rozmer_02.jpg", "test_rozmer_03.jpg", "test_rozmer_04.jpg", "test_sachovnice7x10-15mm.jpg", "test_sachovnice23x32-5mm.jpg"]
+    found_any = False
+
+    for name in test_files:
+        path = os.path.join(script_dir, name)
+        if os.path.exists(path):
+            found_any = True
+            with open(path, "rb") as f:
+                st.download_button(
+                    label=f"Stáhnout {name}",
+                    data=f,
+                    file_name=name,
+                    mime="image/jpg",
+                    use_container_width=True,
+                )
+
+    if not found_any:
+        st.warning("Testovací snímky nebyly nalezeny.")
+    st.markdown("---")
+
     # Kalibrace pomocí šachovnice
     with st.expander("Kalibrace", expanded=True):
         st.caption("Nastavení px/mm a šachovnice")
