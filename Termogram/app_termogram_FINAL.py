@@ -324,7 +324,7 @@ with st.sidebar:
         beta = st.slider("Jas (Beta)", -100, 100, key="sl_beta")
         blur_k = st.slider("Gauss. filtr [px]", 0, 15, step=2, key="sl_blur_k")
 
-    with st.expander("Statistická anomálie", expanded=False):
+    with st.expander("Statistické hledání - Z-skóre", expanded=False):
         z_window = st.slider("Velikost okna [px]", 11, 201, step=2, key="sl_z_window")
         z_thresh = st.slider("Z-skóre práh", 1.0, 8.0, step=0.1, key="sl_z_thresh")
 
