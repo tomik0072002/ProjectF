@@ -318,7 +318,20 @@ source_mode = st.radio(
 input_col, btn_col = st.columns([4, 1])
 with input_col:
     if source_mode == "Google Drive (File ID)":
-        gdrive_id = st.text_input("Google Drive File ID", placeholder="(část URL souboru mezi /d/ a /view)")
+        # Výběr možností
+        vyber_gdrive = st.selectbox(
+            "Vyberte sken z Google Drive",
+            ["Sken 1", "Sken 2", "Zadat vlastní ID..."]
+        )
+
+        # Nastavení gdrive_id podle výběru
+        if vyber_gdrive == "Sken 1":
+            gdrive_id = "1cx8ob4rpCk5Ov3ELmV7Zx0VPcwRVwr5I  "
+        elif vyber_gdrive == "Sken 2":
+            gdrive_id = "1tw2wcFo7yGd2bInCsrX9dPay15ePIu4W"
+        else:
+            gdrive_id = st.text_input("Vlastní Google Drive File ID", placeholder="(část URL souboru mezi /d/ a /view)")
+
         local_filename = f"{gdrive_id.strip()[:4]}.npy" if gdrive_id else "data.npy"
         file_path = local_filename if gdrive_id else ""
     else:
