@@ -317,7 +317,7 @@ with st.sidebar:
     show_mask = st.toggle("Zobrazit masku", value=True)
     show_table = st.toggle("Zobrazit tabulku dat", value=True)
     highlight_max = st.toggle("Zvýraznit maxima v tabulce", value=True)
-    show_debug = st.toggle("Mezikroky výsledné masky", value=True)
+    show_debug = st.toggle("Mezikroky výsledné masky", value=False)
 
 
 # Hlavní stránka
